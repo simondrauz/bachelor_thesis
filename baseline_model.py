@@ -72,14 +72,13 @@ def compute_baseline_tuning(data: pd.DataFrame, country_ids: list[int], forecast
     crps_scores['quantiles'] = crps_scores['quantiles'].apply(tuple)
 
     # year_average_crps by ['country_id', 'train_months', 'forecast_horizon', 'quantiles']
-    crps_scores_all_year_country_specific = \
-        crps_scores.groupby(['country_id', 'train_months', 'forecast_horizon', 'quantiles'])
-    [['average_crps', 'average_fatalities']].mean().reset_index()
+    crps_scores_all_year_country_specific = crps_scores.groupby([
+        'country_id', 'train_months', 'forecast_horizon', 'quantiles']).mean()[
+        ['average_crps', 'average_fatalities']].reset_index()
 
     # year_average_crps by ['train_months', 'forecast_horizon', 'quantiles']
-    crps_scores_all_year_global = \
-        crps_scores.groupby(['train_months', 'forecast_horizon', 'quantiles'])
-    [['average_crps', 'average_fatalities']].mean().reset_index()
+    crps_scores_all_year_global = crps_scores.groupby(['train_months', 'forecast_horizon', 'quantiles']).mean()[
+        ['average_crps', 'average_fatalities']].reset_index()
 
     # Convert quantiles as tuple type back to list such that it can be sorted and filtered by specific lists
     crps_scores_all_year_country_specific['quantiles'] = crps_scores_all_year_country_specific['quantiles'].apply(list)
