@@ -208,6 +208,7 @@ def replace_duplicates(df: pd.DataFrame, df_duplicates: pd.DataFrame) -> pd.Data
     df = df.groupby(['country_id', 'month_id']).min().reset_index()
     return df
 
+
 def fill_na_values(df: pd.DataFrame):
     """
     Tracks the number of NaN values in the conflict fatality counts and replaces them with 0
@@ -226,3 +227,31 @@ def fill_na_values(df: pd.DataFrame):
         df[column] = df[column].fillna(0)
 
     return df
+
+
+def train_test_split(data: pd.DataFrame, country_id: int, forecast_month: int, train_months: int, forecast_horizon: int
+                     ) -> (pd.DataFrame, pd.DataFrame):
+    """
+    Splits data set into training data and evaluation data.
+    :param data: data set with conflict fatalities of all countries and all available data, respectively
+    :param country_id: country_id of the country of interest
+    :param forecast_month: month we want to compute forecast for
+    :param train_months: number of months used in training period
+    :param forecast_horizon: indicates how far apart from forecast origin the forecast
+                             is made (forecast month = forecast origin + forecast horizon)
+    :return: training set and evaluation set
+    """
+
+    # Calculate start month of training period
+    start_month_train = forecast_month - (train_months + forecast_horizon)
+
+    # Filter data such that necessary months for training and evaluation are included for a specific country
+    data = data[(data['country_id'] == country_id) &
+                (data['month_id'] >= start_month_train) &
+                (data['month_id'] <= forecast_month)]
+
+    # Specify training and evaluation data (evaluation data is basically one month, historically grown)
+    train_set = data[data['month_id'] < (forecast_month - forecast_horizon)]
+    eval_set = data[data['month_id'] == forecast_month]
+
+    return train_set, eval_set
