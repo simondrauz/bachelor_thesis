@@ -1,17 +1,16 @@
 import itertools
 
-import int
+
 import numpy as np
 import pandas as pd
 import CRPS.CRPS as pscore
-
+from data_preparation import train_test_split
 from mappings import map_date_to_month_id
 
 
-def compute_baseline_tuning(data: pd.DataFrame, country_ids: list[int], forecast_month_set: list,
-                            train_months_set: list[int], forecast_horizon_set: list,
-                            quantiles_set: list[list[float]], output_directory: str, year: int) -> tuple[
-    pd.DataFrame, pd.DataFrame]:
+def compute_baseline_tuning(data: pd.DataFrame, country_ids: list, forecast_month_set: list,
+                            train_months_set: list, forecast_horizon_set: list,
+                            quantiles_set: list, output_directory: str, year: int) -> tuple:
     """
     Compute the baseline tuning for a forecasting model using CRPS metric.
     To forecast a month t we compute the quantiles of w training months in a period [t-w-h, t-(h+1)] and compute the
@@ -95,7 +94,7 @@ def compute_baseline_tuning(data: pd.DataFrame, country_ids: list[int], forecast
     return crps_scores_all_year_country_specific, crps_scores_all_year_global
 
 
-def compute_baseline_crps(train_set: pd.DataFrame, eval_set: pd.DataFrame, quantiles: list[float]) -> float:
+def compute_baseline_crps(train_set: pd.DataFrame, eval_set: pd.DataFrame, quantiles: list) -> float:
     """
     Performs forecast for the specific model settings and returns the CRPS value of the prediction for forecast_month
 
@@ -109,40 +108,12 @@ def compute_baseline_crps(train_set: pd.DataFrame, eval_set: pd.DataFrame, quant
     quantiles = compute_quantiles(train_set, quantiles)
 
     # Compute forecast samples based on quantiles computed from training data
-    crps = compute_crps(eval_data=eval_set, quantiles=quantiles)
+    crps = compute_crps_baseline(eval_data=eval_set, quantiles=quantiles)
 
     return crps
 
 
-def train_test_split(data: pd.DataFrame, country_id: int, forecast_month: int, train_months: int, forecast_horizon: int
-                     ) -> (pd.DataFrame, pd.DataFrame):
-    """
-    Splits data set into training data and evaluation data.
-    :param data: data set with conflict fatalities of all countries and all available data, respectively
-    :param country_id: country_id of the country of interest
-    :param forecast_month: month we want to compute forecast for
-    :param train_months: number of months used in training period
-    :param forecast_horizon: indicates how far apart from forecast origin the forecast
-                             is made (forecast month = forecast origin + forecast horizon)
-    :return: training set and evaluation set
-    """
-
-    # Calculate start month of training period
-    start_month_train = forecast_month - (train_months + forecast_horizon)
-
-    # Filter data such that necessary months for training and evaluation are included for a specific country
-    data = data[(data['country_id'] == country_id) &
-                (data['month_id'] >= start_month_train) &
-                (data['month_id'] <= forecast_month)]
-
-    # Specify training and evaluation data (evaluation data is basically one month, historically grown)
-    train_set = data[data['month_id'] < (forecast_month - forecast_horizon)]
-    eval_set = data[data['month_id'] == forecast_month]
-
-    return train_set, eval_set
-
-
-def compute_quantiles(train_data: pd.DataFrame, quantiles: list[float]) -> pd.DataFrame:
+def compute_quantiles(train_data: pd.DataFrame, quantiles: list) -> pd.DataFrame:
     """
     Function to compute quantiles of training data for specified quantiles
     :param train_data: conflict fatalities of specified training period
@@ -159,7 +130,7 @@ def compute_quantiles(train_data: pd.DataFrame, quantiles: list[float]) -> pd.Da
     return quantiles_df
 
 
-def compute_crps(eval_data: pd.DataFrame, quantiles: pd.DataFrame) -> float:
+def compute_crps_baseline(eval_data: pd.DataFrame, quantiles: pd.DataFrame) -> float:
     """
     Compute CRPS score based on quantiles as forecasting sample for forecasting month
     :param eval_data: evaluation data corresponding forecast_month
