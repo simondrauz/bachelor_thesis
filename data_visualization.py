@@ -6,10 +6,10 @@ from mappings import import_country_mapping
 
 def get_country_name(country_id: int, country_mapping: pd.DataFrame) -> str:
     """
-    Gets the country name corresponding to a data set if it only contains data of one country.
-    :param df: data frame with specific country and time period
+    Gets the country name corresponding to a country_id.
+    :param country_id: country_id of the country
     :param country_mapping: mapping of country_id to country_name
-    :return: country_name corresponding to data_set
+    :return: country_name corresponding to country_id
     """
 
     if len(country_id) == 0:
@@ -21,6 +21,7 @@ def get_country_name(country_id: int, country_mapping: pd.DataFrame) -> str:
         raise Exception('The given data frame contains more than one country_id.')
 
     return country_name
+
 
 # ToDo: Solve issues with export of plots (are displayed correctly in IDE, but white in file)
 # ToDo: Countries with few conflict fatalities show x axes centered -->should be at the bottom
@@ -83,3 +84,35 @@ def basic_line_plot(df: pd.DataFrame, country_mapping: pd.DataFrame, start_month
             else:
                 savepath = rf'C:\Users\Uwe Drauz\Documents\bachelor_thesis_local\personal_competition_data\Plots\other_time_period_sb_ns_os_lineplot\{country_id}_{country_name}_start_month_{start_month}.png'
                 plt.savefig(savepath)
+
+
+def global_scatter_plot(df: pd.DataFrame, var1: str, var2: str, output_dir: str, show=True, export=False):
+    """
+    Creates scatter plot of two variables. Used to get an overview of the data.
+    :param df: data frame with data of a specific time period
+    :param var1: name of first variable
+    :param var2: name of second variable
+    :param output_dir: directory where plot should be saved
+    :param show: Plot is displayed if True
+    :param export: Set true if plot should be saved
+    :return:
+    """
+    # Set the style of the plot
+    sns.set(style="darkgrid")
+
+    # Create the scatter plot
+    sns.scatterplot(data=df[[var1, var2]], x=var1, y=var2)
+
+    # Set the labels and title
+    plt.xlabel(var1)
+    plt.ylabel(var2)
+    plt.title(f'{var1} vs {var2}')
+
+    # Display the plot
+    if show is True:
+        plt.show()
+
+    # save the plot according to what they are displaying
+    if export is True:
+        savepath = rf'{output_dir}\scatterplot_{var1}_vs_{var2}.png'
+        plt.savefig(savepath)
