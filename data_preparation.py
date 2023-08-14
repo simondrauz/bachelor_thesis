@@ -19,7 +19,7 @@ def select_data(df: pd.DataFrame, country_id: np.integer, month_cut: int) -> pd.
     return df
 
 
-def prepare_data(df: pd.DataFrame, variables_to_check: list[str], duplicate_check=True) -> pd.DataFrame:
+def prepare_data(df: pd.DataFrame, variables_to_check: list, duplicate_check=True) -> pd.DataFrame:
     """
     Prepares the data such that duplicate values are found and aggregated by keeping the smaller value
     and additionally filling the NaN values with 0s.
@@ -28,7 +28,7 @@ def prepare_data(df: pd.DataFrame, variables_to_check: list[str], duplicate_chec
     :param df: data frame of data set with or without features
     :param variables_to_check: determines which for which variables of the data frame duplicates should be examined
     :param duplicate_check: determines if the nature of the duplicates should be analysed
-    :return: data frame of data set with dulpicates handled
+    :return: data frame of data set with duplicates handled
     """
     # Find duplicate rows regarding 'month_id' and 'country_id'
     duplicates = find_duplicates(df)
@@ -71,7 +71,7 @@ def list_contains_nan(lst: np.ndarray) -> bool:
 
 # ToDo: Look into duplicates (e.g. exception if different values at duplicate)
 # ToDO: Might has to be revised for duplicate checks on whole dataframe ->there seem to be no duplicates now??
-def check_duplicates(df, variables_to_check: list[str]):
+def check_duplicates(df, variables_to_check: list) -> pd.DataFrame:
     """
     Checks the nature of the found duplicates for each of the conflict fatalitiy counts. We differenciate:
     Only NaN: The found duplicate has a nan value for both entries.
@@ -238,9 +238,16 @@ def train_test_split(data: pd.DataFrame, country_id: int, forecast_month: int, t
     :param forecast_month: month we want to compute forecast for
     :param train_months: number of months used in training period
     :param forecast_horizon: indicates how far apart from forecast origin the forecast
-                             is made (forecast month = forecast origin + forecast horizon)
+                             is made (forecast month = forecast origin + forecast horizon),
+                             alternatively: no. of months inbetween last training month and forecasted month
     :return: training set and evaluation set
     """
+
+    # Handle special case of all available data used for training
+    if train_months == 'all':
+        all_months = data['month_id'].unique()
+        all_months_previous = all_months[all_months < forecast_month]
+        train_months = len(all_months_previous)
 
     # Calculate start month of training period
     start_month_train = forecast_month - (train_months + forecast_horizon)
