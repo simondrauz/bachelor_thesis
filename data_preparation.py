@@ -262,3 +262,28 @@ def train_test_split(data: pd.DataFrame, country_id: int, forecast_month: int, t
     eval_set = data[data['month_id'] == forecast_month]
 
     return train_set, eval_set
+
+
+def standardize(df: pd.DataFrame) -> pd.DataFrame:
+    """Standardize a pandas DataFrame"""
+    standardized_df = pd.DataFrame()
+    for column in df.columns:
+        standardized_column = (df[column] - df[column].mean()) / df[column].std()
+        standardized_df[column] = standardized_column
+    return standardized_df
+
+
+def take_logarithm(df: pd.DataFrame) -> pd.DataFrame:
+    """take logarithm a pandas DataFrame"""
+    logarithmized_df = pd.DataFrame()
+    for column in df.columns:
+        logarithmized_column = np.log(df[column])
+        logarithmized_df[column] = logarithmized_column
+    return logarithmized_df
+
+
+# Note: So far this function is not used
+def add_year_column(df: pd.DataFrame) -> pd.DataFrame:
+    # Extracting year from month_id by dividing by 12 and adding the base year 1990
+    df['year'] = ((df['month_id'] - 1) // 12) + 1990
+    return df
