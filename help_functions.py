@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta
-import arviz
+import subprocess
+import time
+import mlflow
 
 
 def generate_datetime_list(start_year: int, start_month: int, end_year: int, end_month: int) -> list:
@@ -41,3 +43,22 @@ def seconds_to_format(seconds: float) -> str:
 
     # Return in the desired format
     return f"{hours}h {minutes}min {remaining_seconds}s"
+
+
+def start_mlflow_server(experiment_name: str, tracking_uri = "http://127.0.0.1:5000"):
+    """
+    Starts mlflow user interface and assign tracking uri as well as experiment.
+    Those are necessary steps to log data in mlflow and have to be taken before every first mlflow logging
+    Args:
+        experiment_name:
+        tracking_uri:
+
+    Returns:
+
+    """
+    subprocess.Popen(["mlflow", "ui"])
+
+    # Wait for a few seconds to ensure the server starts (optional)
+    time.sleep(5)
+    mlflow.set_tracking_uri(tracking_uri)
+    mlflow.set_experiment(experiment_name)
