@@ -7,6 +7,7 @@ import mlflow
 import numpy as np
 import pandas as pd
 from mlflow.data.pandas_dataset import PandasDataset
+from typing import Optional
 
 from help_functions import seconds_to_format
 
@@ -130,10 +131,10 @@ def generate_model_dict(model_name: str, prior_specifications: dict) -> dict:
 
 
 def generate_model_hyperparameters_dict(predictors: list,
-                                        no_knots_per_regressor: list[int],
-                                        tau_hyperparameters: list[tuple[float, float]],
                                         alpha_nb_hyperparameters: tuple[float, float],
-                                        intercept_hyperparameters: tuple[float, float]) -> dict:
+                                        intercept_hyperparameters: tuple[float, float],
+                                        no_knots_per_regressor: Optional[list[int]] = None,
+                                        tau_hyperparameters: Optional[list[tuple[float, float]]] = None) -> dict:
     """
     Information about model hyperparameters.
     Args:
@@ -150,22 +151,26 @@ def generate_model_hyperparameters_dict(predictors: list,
     Returns:
 
     """
-    # Check that the length of hyperparameter inputs connected to predictors is the same as the length of predictors
-    assert len(predictors) == len(
-        no_knots_per_regressor), "Mismatch in length between predictors and no_knots_per_regressor"
-    assert len(predictors) == len(tau_hyperparameters), "Mismatch in length between predictors and tau_hyperparameters"
-
-    return {
-        # Create dictionaries for some parameters that they can be clearly assigned to a predictor
-        "no_knots_per_regressor": {
-            predictors[i]: no_knots_per_regressor[i] for i in range(len(predictors))
-        },
-        "tau_hyperparameters": {
-            predictors[i]: tau_hyperparameters[i] for i in range(len(predictors))
-        },
+    # First, start with the base dictionary that always gets returned.
+    result_dict = {
         "alpha_nb_hyperparameters": alpha_nb_hyperparameters,
         "intercept_hyperparameters": intercept_hyperparameters
     }
+
+    # Check if no_knots_per_regressor is not None, assert its length, and then add it to the dictionary.
+    if no_knots_per_regressor is not None:
+        assert len(predictors) == len(
+            no_knots_per_regressor), "Mismatch in length between predictors and no_knots_per_regressor"
+        result_dict["no_knots_per_regressor"] = {predictors[i]: no_knots_per_regressor[i] for i in
+                                                 range(len(predictors))}
+
+    # Similarly, check if tau_hyperparameters is not None, assert its length, and then add it to the dictionary.
+    if tau_hyperparameters is not None:
+        assert len(predictors) == len(
+            tau_hyperparameters), "Mismatch in length between predictors and tau_hyperparameters"
+        result_dict["tau_hyperparameters"] = {predictors[i]: tau_hyperparameters[i] for i in range(len(predictors))}
+
+    return result_dict
 
 
 def generate_sampling_hyperparameters_dict(tuning_iterations: int, sampling_iterations: int,
@@ -223,13 +228,15 @@ def generate_model_results_dict(idata: az.InferenceData, crps_score: float) -> d
 
 def generate_all_dictionaries_pymc(training_data: pd.DataFrame, data_characteristics: dict, data_transformation: str,
                                    country_name: str, predictors: list,
-                                   model_name: str, prior_specifications: dict, no_knots_per_regressor: list[int],
-                                   tau_hyperparameters: list[tuple[float, float]],
+                                   model_name: str, prior_specifications: dict,
                                    alpha_nb_hyperparameters: tuple[float, float],
                                    intercept_hyperparameters: tuple[float, float], tuning_iterations: int,
                                    sampling_iterations: int, target_acceptance_rate: float, chains: int,
                                    divergences: int, sampling_time: float, idata: az.InferenceData,
-                                   crps_score: float) -> dict:
+                                   crps_score: float,
+                                   no_knots_per_regressor: Optional[list[int]] = None,
+                                   tau_hyperparameters: Optional[list[tuple[float, float]]] = None,
+                                   ) -> dict:
     data_dict = generate_data_dict(training_data, data_characteristics, data_transformation, country_name, predictors)
     model_dict = generate_model_dict(model_name, prior_specifications)
     model_hyperparameters_dict = generate_model_hyperparameters_dict(predictors, no_knots_per_regressor,
@@ -267,8 +274,6 @@ def ml_flow_tracking_pymc(data: dict, model: dict, hyperparameters_model: dict, 
     Returns:
 
     """
-    mlflow.set_tracking_uri("http://127.0.0.1:5000")
-
     with mlflow.start_run(run_name=model["model_name"]):
         # Log data parameters
         for key, value in data.items():
@@ -314,7 +319,10 @@ def ml_flow_tracking_pymc(data: dict, model: dict, hyperparameters_model: dict, 
 
         # Store the artifact in the artifact folder connected to the current run
         # Get the current run's artifact URI
-        artifact_dir = os.path.join(os.getcwd(), "mlruns", "0", mlflow.active_run().info.run_id, "artifacts")
+        # artifact_dir = os.path.join(os.getcwd(), "mlruns", "0", mlflow.active_run().info.run_id, "artifacts")
+        experiment_id = mlflow.get_experiment_by_name("bayesian_models").experiment_id
+        artifact_dir = os.path.join(os.getcwd(), "mlruns", experiment_id, mlflow.active_run().info.run_id, "artifacts")
+
         # Export and log the InferenceData as an artifact
         try:
             # Logs only InferenceData object, not the whole artifact folder
