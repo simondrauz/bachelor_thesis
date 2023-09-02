@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+import arviz
 
 
 def generate_datetime_list(start_year: int, start_month: int, end_year: int, end_month: int) -> list:
@@ -26,3 +27,17 @@ def generate_datetime_list(start_year: int, start_month: int, end_year: int, end
         current_date = current_date.replace(day=1)
 
     return datetime_list
+
+
+def seconds_to_format(seconds: float) -> str:
+    # Convert seconds to integer
+    int_seconds = int(seconds)
+
+    # Calculate hours, minutes, and remaining seconds
+    hours = int_seconds // 3600
+    int_seconds %= 3600
+    minutes = int_seconds // 60
+    remaining_seconds = int_seconds % 60
+
+    # Return in the desired format
+    return f"{hours}h {minutes}min {remaining_seconds}s"
