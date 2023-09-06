@@ -1,5 +1,11 @@
+from typing import Tuple, List
+
+import patsy as ps
 import numpy as np
 import pandas as pd
+from pandas import DataFrame
+
+from mappings import import_country_mapping
 
 
 def select_data(df: pd.DataFrame, country_id: np.integer, month_cut: int) -> pd.DataFrame:
@@ -264,6 +270,45 @@ def train_test_split(data: pd.DataFrame, country_id: int, forecast_month: int, t
     return train_set, eval_set
 
 
+def preprocess_data(df: pd.DataFrame, predictors: List[str], target_variable: str, country_name: str) -> Tuple[
+    DataFrame, DataFrame, DataFrame, DataFrame]:
+    """
+    Takes a dataframe, predictors, target_variable and country_name.
+    Returns four modified dataframes:
+    - df with non-standardized target and standardized predictors
+    - df with standardized target and standardized predictors
+    - df with non-standardized target and logarithm of standardized predictors
+    - df with standardized target and logarithm of standardized predictors
+    """
+
+    # Extract country mapping and get country ID
+    country_mapping = import_country_mapping()
+    country_id = country_mapping.loc[country_mapping['name'] == country_name, 'country_id'].iloc[0]
+
+    # Extract target and predictor data for the given country
+    X = df.loc[df['country_id'] == country_id, predictors].reset_index(drop=True, inplace=False)
+    Y = df.loc[df['country_id'] == country_id, target_variable].reset_index(drop=True, inplace=False)
+
+    # Standardize
+    Y_std = standardize(Y)
+    X_std = standardize(X)
+
+    # Log-transform standardized predictors
+    X_std_log = take_logarithm(X_std)
+
+    # Create modified dataframes
+    # Create data frame with target variable and standardized input data
+    df_Y_non_std_X_std = pd.concat([Y, X_std], axis=1)
+    # Create data frame with standardized target variable and standardized input data
+    df_Y_std_X_std = pd.concat([Y_std, X_std], axis=1)
+    # Create data frame with target variable and standardized logarithm of input data
+    df_Y_non_std_X_std_log = pd.concat([Y, X_std_log], axis=1)
+    # Create data frame with standardized target variable and standardized logarithm of input data
+    df_Y_std_X_std_log = pd.concat([Y_std, X_std_log], axis=1)
+
+    return df_Y_non_std_X_std, df_Y_std_X_std, df_Y_non_std_X_std_log, df_Y_std_X_std_log
+
+
 def standardize(df: pd.DataFrame) -> pd.DataFrame:
     """Standardize a pandas DataFrame"""
     standardized_df = pd.DataFrame()
@@ -287,3 +332,52 @@ def add_year_column(df: pd.DataFrame) -> pd.DataFrame:
     # Extracting year from month_id by dividing by 12 and adding the base year 1990
     df['year'] = ((df['month_id'] - 1) // 12) + 1990
     return df
+
+
+# ToDo: Check functionality of quantile-based knot generation
+def generate_knots(data, num_knots, equal_spacing=True, quantile_spacing=False):
+    """
+    Generate knot locations for spline basis functions.
+
+    Args:
+    - data (array-like): Data on which to base the knot locations.
+    - num_knots (int): Number of knots to generate.
+    - method (str): Method to use for generating knots. Options are "equal_spacing" and "quantiles".
+
+    Returns:
+    - knots (np.array): Array of knot locations.
+    """
+
+    if equal_spacing:
+        # Equal spacing method
+        knots = np.linspace(data.min(), data.max(), num_knots + 2)[1:-1]
+    elif quantile_spacing:
+        # Quantiles method
+        quantiles = np.linspace(0, 1, num_knots + 2)[1:-1]
+        knots = np.quantile(data, quantiles)
+
+    return knots
+
+
+def generate_spline_design_matrix(covariate_data: np.ndarray, knots: np.ndarray, spline_degree: int) -> ps.DesignMatrix:
+    """
+    Generate a spline design matrix using the specified knot locations and spline degree.
+
+    Args:
+    - covariate_data (array-like): Data on which to base the design matrix.
+    - knots (array-like): Locations of the knots.
+    - spline_degree (int): Degree of the spline.
+
+    Returns:
+    - design_matrix (patsy DesignMatrix): Spline-based design matrix.
+
+    Note:
+    We include the intercept once in the model via the intercept parameter.
+    To prevent having additional '1' columns in basis functions, include_intercept is set to False
+    and automatic creation of '1' column of patsy is prevented by '-1'.
+    """
+
+    design_matrix = ps.dmatrix("bs(covariate_data, knots=knots, degree=spline_degree, include_intercept=False) -1",
+                               {"covariate_data": covariate_data, "knots": knots, "spline_degree": spline_degree})
+
+    return design_matrix
