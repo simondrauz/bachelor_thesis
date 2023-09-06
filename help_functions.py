@@ -45,20 +45,27 @@ def seconds_to_format(seconds: float) -> str:
     return f"{hours}h {minutes}min {remaining_seconds}s"
 
 
-def start_mlflow_server(experiment_name: str, tracking_uri = "http://127.0.0.1:5000"):
-    """
-    Starts mlflow user interface and assign tracking uri as well as experiment.
-    Those are necessary steps to log data in mlflow and have to be taken before every first mlflow logging
-    Args:
-        experiment_name:
-        tracking_uri:
+class MLFlowServer:
+    def __init__(self, experiment_name: str, tracking_uri="http://127.0.0.1:5000"):
+        self.experiment_name = experiment_name
+        self.tracking_uri = tracking_uri
+        self.process = None
 
-    Returns:
+    def start(self):
+        """
+        Starts the MLflow user interface and sets the tracking URI and experiment.
+        """
+        self.process = subprocess.Popen(["mlflow", "ui"])
 
-    """
-    subprocess.Popen(["mlflow", "ui"])
+        # Wait for a few seconds to ensure the server starts (optional)
+        time.sleep(5)
+        mlflow.set_tracking_uri(self.tracking_uri)
+        mlflow.set_experiment(self.experiment_name)
 
-    # Wait for a few seconds to ensure the server starts (optional)
-    time.sleep(5)
-    mlflow.set_tracking_uri(tracking_uri)
-    mlflow.set_experiment(experiment_name)
+    def stop(self):
+        """
+        Shuts down the MLflow server.
+        """
+        if self.process:
+            self.process.terminate()
+            self.process = None
