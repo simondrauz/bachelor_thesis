@@ -57,8 +57,8 @@ class MLFlowServer:
         """
         self.process = subprocess.Popen(["mlflow", "ui"])
 
-        # Wait for a few seconds to ensure the server starts (optional)
         time.sleep(5)
+
         mlflow.set_tracking_uri(self.tracking_uri)
         mlflow.set_experiment(self.experiment_name)
 
@@ -68,4 +68,5 @@ class MLFlowServer:
         """
         if self.process:
             self.process.terminate()
+            self.process.wait()  # Wait for the process to actually terminate
             self.process = None
