@@ -1,7 +1,7 @@
 from data_gathering import gather_data_actuals, gather_data_features
 from data_preparation import select_data, prepare_data
 from data_visualization import basic_line_plot, import_country_mapping
-from baseline_model import compute_baseline_tuning
+from data_modelling_baseline import compute_baseline_tuning
 from bayesian_regression import compute_bayesian_model
 from help_functions import generate_datetime_list
 from mappings import map_date_to_month_id
