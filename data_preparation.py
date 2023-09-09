@@ -1,5 +1,6 @@
 from typing import Tuple, List
 
+import datetime
 import patsy as ps
 import numpy as np
 import pandas as pd
@@ -206,7 +207,8 @@ def replace_duplicates(df: pd.DataFrame, df_duplicates: pd.DataFrame) -> pd.Data
     :param df_duplicates: data frame with duplicates corrected
     :return:
     """
-    duplicated_values = df_duplicates.drop_duplicates(subset=['country_id', 'month_id'])[['country_id', 'month_id']].values.tolist()
+    duplicated_values = df_duplicates.drop_duplicates(subset=['country_id', 'month_id'])[
+        ['country_id', 'month_id']].values.tolist()
     print(
         f'Replacing the value of {len(duplicated_values)} duplicates at {duplicated_values} with the smaller value of conflict fatalities respective the type of conflict')
 
@@ -270,8 +272,8 @@ def train_test_split(data: pd.DataFrame, country_id: int, forecast_month: int, t
     return train_set, eval_set
 
 
-def preprocess_data(df: pd.DataFrame, predictors: List[str], target_variable: str, country_name: str) -> Tuple[
-    DataFrame, DataFrame, DataFrame, DataFrame]:
+def preprocess_data(df: pd.DataFrame, predictors: List[str], target_variable: str, country_name: str
+                    ) -> Tuple[DataFrame, DataFrame, DataFrame, DataFrame]:
     """
     Takes a dataframe, predictors, target_variable and country_name.
     Returns four modified dataframes:
@@ -381,3 +383,44 @@ def generate_spline_design_matrix(covariate_data: np.ndarray, knots: np.ndarray,
                                {"covariate_data": covariate_data, "knots": knots, "spline_degree": spline_degree})
 
     return design_matrix
+
+
+def get_training_data(df: pd.DataFrame, evaluation_year: int, forecast_horizon=3) -> pd.DataFrame:
+    """
+    Returns the training data for a specific evaluation year based on a forecast horizon of three months
+    Args:
+        df: preprocessed data frame
+        evaluation_year: year we want to obtain forecasts eventually
+        forecast_horizon: value of three months taken in accordance with competition setting
+
+    Returns: truncated data frame
+    """
+    # Calculate the last month of training based on evaluation year and forecast horizon
+    # Set the month to October of the previous year (given the horizon of 3 months)
+    last_training_month = datetime(evaluation_year - 1, 13 - forecast_horizon, 1)
+
+    # Filter dataframe using datetime comparison
+    training_data = df[df['month_id'] <= last_training_month]
+
+    return training_data
+
+
+def generate_data_dict_pre_modelling(data_transformation: str,
+                                     predictors: list,
+                                     target_variable: str
+                                     ) -> dict:
+    """
+    Generates a dictionary summarizing the key properties of the model input
+    Args:
+        data_transformation:
+        predictors:
+        target_variable:
+
+    Returns:
+
+    """
+    return {
+        'data_transformation': data_transformation,
+        'predictors': predictors,
+        'target_variable': target_variable
+    }
