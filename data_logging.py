@@ -165,16 +165,17 @@ def generate_sampling_hyperparameters_dict(tuning_iterations: int,
     }
 
 
-def generate_sampling_monitoring_dict(divergences: int, sampling_time: float) -> dict:
+def generate_sampling_monitoring_dict(idata: az.InferenceData, sampling_time: float) -> dict:
     """
     Information about monitoring characteristics of sampling process.
     Args:
-        divergences: no. of divergences in sampling process
+        idata: Inference Data object for counting no. of divergences in sampling process
         sampling_time: time taken to sample pymc model (measured with time.time)
 
     Returns:
 
     """
+    divergences = count_divergences(idata)
     return {
         "divergences": divergences,
         "sampling_time": seconds_to_format(sampling_time)
@@ -202,31 +203,18 @@ def generate_model_results_dict(idata: az.InferenceData,
     }
 
 
-def generate_all_dictionaries(training_data: pd.DataFrame,
-                              evaluation_data: pd.DataFrame,
-                              data_characteristics_train: dict,
-                              data_characteristics_eval: dict,
-                              data_transformation: str,
-                              country_name: str,
-                              predictors: List,
-                              model_name: str,
-                              prior_specifications: dict,
-                              tuning_iterations: int,
-                              sampling_iterations: int,
-                              target_acceptance_rate: float,
-                              chains: int,
-                              divergences: int,
-                              sampling_time: float,
-                              idata: az.InferenceData,
-                              crps_score_train: float,
-                              crps_score_eval: float,
+def generate_all_dictionaries(training_data: pd.DataFrame, evaluation_data: pd.DataFrame,
+                              data_characteristics_train: dict, data_characteristics_eval: dict,
+                              data_transformation: str, country_name: str, predictors: List, model_name: str,
+                              prior_specifications: dict, tuning_iterations: int, sampling_iterations: int,
+                              target_acceptance_rate: float, chains: int, sampling_time: float, idata: az.InferenceData,
+                              crps_score_train: float, crps_score_eval: float,
                               intercept_hyperparameters: Tuple[float, float],
                               alpha_nb_hyperparameters: Optional[Tuple[float, float]] = None,
                               no_spline_coefficients_per_regressor: Optional[List[int]] = None,
                               tau_hyperparameters: Optional[List[Tuple[float, float]]] = None,
                               beta_hyperparameters: Optional[Tuple[float, float]] = None,
-                              sigma_gaussian_hyperparameters: Optional[float] = None
-                              ) -> dict:
+                              sigma_gaussian_hyperparameters: Optional[float] = None) -> dict:
     """
     Generate all dictionaries for pymc model.
     Args:
@@ -245,7 +233,6 @@ def generate_all_dictionaries(training_data: pd.DataFrame,
         sampling_iterations:
         target_acceptance_rate:
         chains:
-        divergences:
         sampling_time:
         idata:
         crps_score_train:
@@ -280,7 +267,7 @@ def generate_all_dictionaries(training_data: pd.DataFrame,
         sampling_iterations=sampling_iterations,
         target_acceptance_rate=target_acceptance_rate,
         chains=chains)
-    sampling_monitoring_dict = generate_sampling_monitoring_dict(divergences=divergences,
+    sampling_monitoring_dict = generate_sampling_monitoring_dict(idata=idata,
                                                                  sampling_time=sampling_time)
     model_results_dict = generate_model_results_dict(idata=idata,
                                                      crps_score_train=crps_score_train,
