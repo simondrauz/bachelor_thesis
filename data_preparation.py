@@ -237,6 +237,7 @@ def fill_na_values(df: pd.DataFrame):
     return df
 
 
+# ToDo: Check if needed, of needed revise
 def train_test_split(data: pd.DataFrame, country_id: int, forecast_month: int, train_months: int, forecast_horizon: int
                      ) -> (pd.DataFrame, pd.DataFrame):
     """
@@ -245,9 +246,7 @@ def train_test_split(data: pd.DataFrame, country_id: int, forecast_month: int, t
     :param country_id: country_id of the country of interest
     :param forecast_month: month we want to compute forecast for
     :param train_months: number of months used in training period
-    :param forecast_horizon: indicates how far apart from forecast origin the forecast
-                             is made (forecast month = forecast origin + forecast horizon),
-                             alternatively: no. of months inbetween last training month and forecasted month
+    :param forecast_horizon: number of months the forecast is made into the futute from the last training month
     :return: training set and evaluation set
     """
 
@@ -258,7 +257,7 @@ def train_test_split(data: pd.DataFrame, country_id: int, forecast_month: int, t
         train_months = len(all_months_previous)
 
     # Calculate start month of training period
-    start_month_train = forecast_month - (train_months + forecast_horizon)
+    start_month_train = forecast_month - (train_months + forecast_horizon - 1)
 
     # Filter data such that necessary months for training and evaluation are included for a specific country
     data = data[(data['country_id'] == country_id) &
@@ -266,7 +265,7 @@ def train_test_split(data: pd.DataFrame, country_id: int, forecast_month: int, t
                 (data['month_id'] <= forecast_month)]
 
     # Specify training and evaluation data (evaluation data is basically one month, historically grown)
-    train_set = data[data['month_id'] < (forecast_month - forecast_horizon)]
+    train_set = data[data['month_id'] <= (forecast_month - forecast_horizon)]
     eval_set = data[data['month_id'] == forecast_month]
 
     return train_set, eval_set
@@ -367,20 +366,15 @@ def generate_spline_design_matrix(covariate_data: np.ndarray, knots: np.ndarray,
 
     Args:
     - covariate_data (array-like): Data on which to base the design matrix.
-    - knots (array-like): Locations of the knots.
+    - knots (array-like): Locations of the interior knots.
     - spline_degree (int): Degree of the spline.
 
     Returns:
     - design_matrix (patsy DesignMatrix): Spline-based design matrix.
 
-    Note:
-    We include the intercept once in the model via the intercept parameter.
-    To prevent having additional '1' columns in basis functions, include_intercept is set to False
-    and automatic creation of '1' column of patsy is prevented by '-1'.
     """
 
-    design_matrix = ps.dmatrix("bs(covariate_data, knots=knots, degree=spline_degree, include_intercept=False) -1",
-                               {"covariate_data": covariate_data, "knots": knots, "spline_degree": spline_degree})
+    design_matrix = ps.bs(covariate_data, knots=knots, degree=spline_degree, include_intercept=False)
 
     return design_matrix
 
