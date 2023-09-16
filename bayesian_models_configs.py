@@ -12,14 +12,21 @@ def fetch_model_run_config(model_name, data_specification: dict) -> dict:
     stan_model_code = read_stan_model(model_name)
     # The configuration in the form of Python dictionaries
     config = {
-        "sampling_parameters": {
-            "num_samples": 1000,
-            "num_tune": 1000,
-            "target_accept": 0.95,
-            "no_chains": 4,
-            "no_ppc_samples": 500
+        "cross_validation_settings": {
+            "k_fold_iterations": 10,
+            # ToDo: Consider leaving out cross-validation_type
+            "cross-validation_type": "rolling_window",
+            "forecast_horizon": 3,
+            "posterior_predictive": ["y_pred_train", "y_pred_eval"]
         },
-        "bayesian_psplines_gaussian_prior": {
+        "sampling_parameters": {
+            'iter': 3000,  # 2000 tuning iterations + 1000 sampling iterations
+            'warmup': 2000,  # Number of tuning iterations
+            'chains': 4,  # Number of chains
+            'seed': 12345,  # Random seed
+            'control': {'adapt_delta': 0.95}  # Target acceptance rate
+        },
+        "bayesian_psplines_gaussian_prior_integrated_functionalities": {
             "model_name": model_name,
             "stan_model_code": stan_model_code,
             "prior_specification": """
@@ -33,15 +40,25 @@ def fetch_model_run_config(model_name, data_specification: dict) -> dict:
                 "likelihood": "NegativeBinomial",
                 "alpha": "Gamma" 
             """,
-            "model_hyperparameters_setting": {
+            "data_generation_specification": {
+                # Note: if this is changed to dynamic, it has to be considered in logging mlflow cal because
+                #       mlflow.params doesn't expect nested dictionaries
+                "covariates": ["ged_sb_tlag_1", "ged_sb_tsum_24"],
+                "target_variable": "ged_sb",
                 "spline_degree": 3,
-                "num_knots_X1": {
-                    "type": "int",
-                    "range": [10, 40]
-                },
-                "num_knots_X2": {
-                    "type": "int",
-                    "range": [10, 40]
+                # OPTIONAL: Consider adding specification of penalty order here
+            },
+            "model_hyperparameter_settings": {
+                # number of interior knots
+                "no_interior_knots": {
+                    "no_interior_knots_X1": {
+                        "type": "int",
+                        "range": [10, 40]
+                    },
+                    "no_interior_knots_X2": {
+                        "type": "int",
+                        "range": [10, 40]
+                    }
                 },
                 "a_tau_X1": {
                     "type": "float",
@@ -85,21 +102,27 @@ def fetch_model_run_config(model_name, data_specification: dict) -> dict:
         raise ValueError(f"No configuration found for the model: {model_name}")
 
     # Fetch the sampling and model parameters
+    cross_validation_settings = config["cross_validation_settings"]
     stan_model = config[model_name]["stan_model_code"]
     sampling_parameters = config["sampling_parameters"]
+    data_generation_specification = config[model_name]["data_generation_specification"]
     model_hyperparameters_setting = config[model_name]["model_hyperparameters_setting"]
     descritive_values = {
         "model_name": config[model_name]["model_name"],
         "prior_specification": config[model_name]["prior_specification"]
+    }
     return {
+        "cross_validation_settings": cross_validation_settings,
         "stan_model_code": stan_model,
         "sampling_parameters": sampling_parameters,
+        "data_generation_specification": data_generation_specification,
         "model_hyperparameters_setting": model_hyperparameters_setting,
         "descriptive_values": descritive_values,
         "data_specification": data_specification,
     }
 
 
+# ToDo: Adjust the storing and reading of the model so functions and rest are separated
 def read_stan_model(model_name: str) -> str:
     # Get the stan model code from the directory
     model_file_path = f"StanModels/{model_name}.stan"
