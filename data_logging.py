@@ -7,7 +7,9 @@ from typing import Union
 
 import arviz as az
 import mlflow
+import optuna
 import pandas as pd
+from help_functions import map_country_id_to_country_name
 
 from help_functions import seconds_to_format
 
@@ -36,8 +38,9 @@ def generate_data_dict(training_data: pd.DataFrame,
                        data_characteristics_train: dict,
                        data_characteristics_eval: dict,
                        data_transformation: str,
-                       country_name: str, predictors: List
-                       ) -> dict:
+                       country_name: str, predictors: List,
+                       is_bayesian_model: Optional[bool] = None,
+                       is_baseline_model: Optional[bool] = None) -> dict:
     """
     Information about data used in model.
     Args:
@@ -52,20 +55,31 @@ def generate_data_dict(training_data: pd.DataFrame,
     Returns:
 
     """
-    return {
-        "training_data": training_data,
-        "evaluation_data": evaluation_data,
-        "data_characteristics_train": data_characteristics_train,
-        "data_characteristics_eval": data_characteristics_eval,
-        "data_transformation": data_transformation,
-        "country_name": country_name,
-        "predictors": predictors
-    }
+    if is_bayesian_model:
+        return {
+            "training_data": training_data,
+            "evaluation_data": evaluation_data,
+            "data_characteristics_train": data_characteristics_train,
+            "data_characteristics_eval": data_characteristics_eval,
+            "data_transformation": data_transformation,
+            "predictors": predictors
+        }
+    if is_baseline_model:
+        return {
+            "training_data": training_data,
+            "evaluation_data": evaluation_data,
+            "data_characteristics_train": data_characteristics_train,
+            "data_characteristics_eval": data_characteristics_eval,
+            "data_transformation": data_transformation,
+            "country_name": country_name,
+        }
 
 
 def generate_model_dict(model_name: str,
-                        prior_specifications: dict
-                        )-> dict:
+                        prior_specifications: dict,
+                        is_bayesian_model: Optional[bool] = None,
+                        is_baseline_model: Optional[bool] = None
+                        ) -> dict:
     """
     Information about model type and specifications.
     Args:
@@ -75,12 +89,18 @@ def generate_model_dict(model_name: str,
     Returns:
 
     """
-    return {
-        "model_name": model_name,
-        "prior_specifications": prior_specifications
-    }
+    if is_bayesian_model:
+        return {
+            "model_name": model_name,
+            "prior_specifications": prior_specifications
+        }
+    if is_baseline_model:
+        return {
+            "model_name": model_name,
+        }
 
 
+# ToDo: Extend this dictionary to store hyperparameters of baseline model
 def generate_model_hyperparameters_dict(predictors: List,
                                         intercept_hyperparameters: Tuple[float, float],
                                         alpha_nb_hyperparameters: Union[None, float, Tuple[float, float]] = None,
@@ -88,7 +108,7 @@ def generate_model_hyperparameters_dict(predictors: List,
                                         tau_hyperparameters: Optional[List[Tuple[float, float]]] = None,
                                         beta_hyperparameters: Optional[List[Tuple[float, float]]] = None,
                                         sigma_gaussian_hyperparameters: Optional[List[Tuple[float, float]]] = None
-                                        )-> dict:
+                                        ) -> dict:
     """
     Information about model hyperparameters.
     Args:
@@ -184,8 +204,9 @@ def generate_sampling_monitoring_dict(idata: az.InferenceData, sampling_time: fl
 
 def generate_model_results_dict(idata: az.InferenceData,
                                 crps_score_train: float,
-                                crps_score_eval: float
-                                ) -> dict:
+                                crps_score_eval: float,
+                                is_bayesian_model: Optional[bool] = None,
+                                is_baseline_model: Optional[bool] = None) -> dict:
     """
     Information about model results.
     Args:
@@ -196,25 +217,44 @@ def generate_model_results_dict(idata: az.InferenceData,
     Returns:
 
     """
-    return {
-        "idata": idata,
-        "crps_score_train": crps_score_train,
-        "crps_score_eval": crps_score_eval
-    }
+    if is_bayesian_model:
+        return {
+            "idata": idata,
+            "crps_score_train": crps_score_train,
+            "crps_score_eval": crps_score_eval
+        }
+    if is_baseline_model:
+        return {
+            "crps_score_eval": crps_score_eval
+        }
 
 
 def generate_all_dictionaries(training_data: pd.DataFrame, evaluation_data: pd.DataFrame,
                               data_characteristics_train: dict, data_characteristics_eval: dict,
-                              data_transformation: str, country_name: str, predictors: List, model_name: str,
-                              prior_specifications: dict, tuning_iterations: int, sampling_iterations: int,
-                              target_acceptance_rate: float, chains: int, sampling_time: float, idata: az.InferenceData,
-                              crps_score_train: float, crps_score_eval: float,
-                              intercept_hyperparameters: Tuple[float, float],
+                              data_transformation: str,
+                              optuna_logging: bool,
+                              optuna_best_params: Optional[dict] = None,
+                              predictors: Optional[List] = None,
+                              model_name: Optional[str] = None,
+                              prior_specifications: Optional[dict] = None,
+                              tuning_iterations: Optional[int] = None,
+                              sampling_iterations: Optional[int] = None,
+                              target_acceptance_rate: Optional[float] = None,
+                              chains: Optional[int] = None,
+                              sampling_time: Optional[float] = None,
+                              idata: Optional[az.InferenceData] = None,
+                              crps_score_train: Optional[float] = None,
+                              crps_score_eval: Optional[float] = None,
+                              country_name: Optional[str] = None,
+                              intercept_hyperparameters: Optional[Tuple[float, float]] = None,
                               alpha_nb_hyperparameters: Optional[Tuple[float, float]] = None,
                               no_spline_coefficients_per_regressor: Optional[List[int]] = None,
                               tau_hyperparameters: Optional[List[Tuple[float, float]]] = None,
                               beta_hyperparameters: Optional[Tuple[float, float]] = None,
-                              sigma_gaussian_hyperparameters: Optional[float] = None) -> dict:
+                              sigma_gaussian_hyperparameters: Optional[float] = None,
+                              is_bayesian_model: Optional[bool] = None,
+                              is_baseline_model: Optional[bool] = None
+                              ) -> dict:
     """
     Generate all dictionaries for pymc model.
     Args:
@@ -251,45 +291,63 @@ def generate_all_dictionaries(training_data: pd.DataFrame, evaluation_data: pd.D
                                    data_characteristics_eval=data_characteristics_eval,
                                    data_transformation=data_transformation,
                                    country_name=country_name,
-                                   predictors=predictors)
+                                   predictors=predictors,
+                                   is_bayesian_model=is_bayesian_model, is_baseline_model=is_baseline_model)
     model_dict = generate_model_dict(model_name=model_name,
-                                     prior_specifications=prior_specifications)
-    model_hyperparameters_dict = generate_model_hyperparameters_dict(
-        predictors=predictors,
-        intercept_hyperparameters=intercept_hyperparameters,
-        alpha_nb_hyperparameters=alpha_nb_hyperparameters,
-        no_spline_coefficients_per_regressor=no_spline_coefficients_per_regressor,
-        tau_hyperparameters=tau_hyperparameters,
-        beta_hyperparameters=beta_hyperparameters,
-        sigma_gaussian_hyperparameters=sigma_gaussian_hyperparameters)
-    sampling_hyperparameters_dict = generate_sampling_hyperparameters_dict(
-        tuning_iterations=tuning_iterations,
-        sampling_iterations=sampling_iterations,
-        target_acceptance_rate=target_acceptance_rate,
-        chains=chains)
-    sampling_monitoring_dict = generate_sampling_monitoring_dict(idata=idata,
-                                                                 sampling_time=sampling_time)
+                                     prior_specifications=prior_specifications,
+                                     is_bayesian_model=is_bayesian_model, is_baseline_model=is_baseline_model)
+    if optuna_logging is True:
+        model_hyperparameters_dict = optuna_best_params
+    else:
+        model_hyperparameters_dict = generate_model_hyperparameters_dict(
+            predictors=predictors,
+            intercept_hyperparameters=intercept_hyperparameters,
+            alpha_nb_hyperparameters=alpha_nb_hyperparameters,
+            no_spline_coefficients_per_regressor=no_spline_coefficients_per_regressor,
+            tau_hyperparameters=tau_hyperparameters,
+            beta_hyperparameters=beta_hyperparameters,
+            sigma_gaussian_hyperparameters=sigma_gaussian_hyperparameters)
+    if is_bayesian_model:
+        sampling_hyperparameters_dict = generate_sampling_hyperparameters_dict(
+            tuning_iterations=tuning_iterations,
+            sampling_iterations=sampling_iterations,
+            target_acceptance_rate=target_acceptance_rate,
+            chains=chains)
+        sampling_monitoring_dict = generate_sampling_monitoring_dict(idata=idata,
+                                                                     sampling_time=sampling_time)
     model_results_dict = generate_model_results_dict(idata=idata,
                                                      crps_score_train=crps_score_train,
-                                                     crps_score_eval=crps_score_eval)
+                                                     crps_score_eval=crps_score_eval,
+                                                     is_bayesian_model=is_bayesian_model,
+                                                     is_baseline_model=is_baseline_model)
 
-    return {
-        "data": data_dict,
-        "model": model_dict,
-        "hyperparameters_model": model_hyperparameters_dict,
-        "hyperparameters_sampling": sampling_hyperparameters_dict,
-        "sampling_monitoring": sampling_monitoring_dict,
-        "model_results": model_results_dict
-    }
+    if is_bayesian_model:
+        return {
+            "data": data_dict,
+            "model": model_dict,
+            "hyperparameters_model": model_hyperparameters_dict,
+            "hyperparameters_sampling": sampling_hyperparameters_dict,
+            "sampling_monitoring": sampling_monitoring_dict,
+            "model_results": model_results_dict
+        }
+    if is_baseline_model:
+        return {
+            "data": data_dict,
+            "model": model_dict,
+            "hyperparameters_model": model_hyperparameters_dict,
+            "model_results": model_results_dict
+        }
 
 
 # ToDo: Logging of CRPS evaluation score
 def ml_flow_tracking(data: dict,
                      model: dict,
                      hyperparameters_model: dict,
-                     hyperparameters_sampling: dict,
-                     sampling_monitoring: dict,
-                     model_results: dict):
+                     model_results: dict,
+                     hyperparameters_sampling: Optional[dict] = None,
+                     sampling_monitoring: Optional[dict] = None,
+                     is_bayesian_model: Optional[bool] = None,
+                     is_baseline_model: Optional[bool] = None):
     """
     Preliminary function to track hyperparameters and results of pymc model
     Args:
@@ -343,13 +401,14 @@ def ml_flow_tracking(data: dict,
                     value = json.dumps(value)
                 mlflow.log_param(key, str(value))
 
-            # Log sampling hyperparameters
-            for key, value in hyperparameters_sampling.items():
-                mlflow.log_param(key, str(value))
+            if is_bayesian_model:
+                # Log sampling hyperparameters
+                for key, value in hyperparameters_sampling.items():
+                    mlflow.log_param(key, str(value))
 
-            # Log sampling monitoring
-            for key, value in sampling_monitoring.items():
-                mlflow.log_param(key, str(value))
+                # Log sampling monitoring
+                for key, value in sampling_monitoring.items():
+                    mlflow.log_param(key, str(value))
 
             # Log CRPS scores
             mlflow.log_metric('crps_train', model_results["crps_score_train"])
@@ -367,3 +426,177 @@ def ml_flow_tracking(data: dict,
                 mlflow.log_artifacts(tmpdir)
             except Exception as e:
                 print(f"Error logging artifacts: {e}")
+
+
+def mlflow_logging_optuna_bayesian(model_name: str,
+                                   evaluation_year: int,
+                                   study_object: optuna.Study,
+                                   sampling_parameters: dict,
+                                   forecast_horizon: int,
+                                   process: str,
+                                   data_generation_specification: dict,
+                                   validation_approach: str):
+    # Check that process is either 'cross-validation' or 'model-testing'
+    assert process in ['cross-validation', 'model-testing'], \
+        "process variable must be either 'cross-validation' or 'model-testing'"
+    best_params = study_object.best_params
+    best_value = study_object.best_value
+    with mlflow.start_run(run_name=model_name) as run:
+        # Get the run_id of the current run
+        run_id = run.info.run_id
+        # Create a temporary directory
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Log conceptual parameters
+            mlflow.log_param('model_name', model_name)
+            mlflow.log_param('evaluation_year', evaluation_year)
+            mlflow.log_param('process', process)
+            mlflow.log_param('validation_approach', validation_approach)
+            mlflow.log_param('forecast_horizon', forecast_horizon)
+
+            # Log data generation specification parameters
+            mlflow.log_params(data_generation_specification)
+            # Log hyperparameters of best_params structure as obtained from optuna.Study.best_params
+            mlflow.log_params(best_params)
+
+            # Log sampling parameters
+            mlflow.log_params(sampling_parameters)
+
+            # Log CRPS score corresponding to best_params
+            mlflow.log_metric('CRPS', best_value)
+
+            # Create a dictionary with best_params and sampling_parameters
+            model_specification = {
+                "best_params": best_params,
+                "sampling_parameters": sampling_parameters,
+                "data_generation_specification": data_generation_specification
+            }
+
+            # Log the model_specification dict as a JSON string as an artifact
+            try:
+                dict_path = os.path.join(tmpdir, f"{model_name}_model_specification.json")
+                model_specification.to_json(dict_path)
+                mlflow.log_artifact(tmpdir)
+            except Exception as e:
+                print("An error occured while logging the model_specifications as an artifact: ", e)
+
+    return run_id
+
+
+def mlflow_logging_optuna_baseline(model_name: str,
+                                   evaluation_year: int,
+                                   country_id: int,
+                                   country_mapping: pd.DataFrame,
+                                   k_fold_iterations: int,
+                                   study_object: optuna.Study,
+                                   forecast_horizon: int,
+                                   process: str,
+                                   validation_approach: str):
+    # Check that process is either 'cross-validation' or 'model-testing'
+    assert process in ['cross-validation', 'model-testing'], \
+        "process variable must be either 'cross-validation' or 'model-testing'"
+    best_params = study_object.best_params
+    best_value = study_object.best_value
+    country_name = map_country_id_to_country_name(country_id=country_id, country_mapping=country_mapping)
+    mlflow.set_experiment("baseline_model")
+    with mlflow.start_run(run_name=model_name) as run:
+        # Get the run_id of the current run
+        run_id = run.info.run_id
+        # Create a temporary directory
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Log conceptual parameters
+            mlflow.log_param('model_name', model_name)
+            mlflow.log_param('evaluation_year', evaluation_year)
+            mlflow.log_param('process', process)
+            mlflow.log_param('validation_approach', validation_approach)
+            mlflow.log_param('forecast_horizon', forecast_horizon)
+            mlflow.log_param('country_name', country_name)
+            mlflow.log_param('k_fold_iterations', k_fold_iterations)
+
+            # Extract quantile_X entries and convert them to a list
+            quantile_keys = [key for key in best_params.keys() if 'quantile_' in key]
+            quantile_values = [best_params[key] for key in sorted(quantile_keys)]
+
+            # Sort the list of quantile values
+            quantile_values.sort()
+            # Convert the sorted list to a JSON-formatted string
+            quantile_values_json = json.dumps(quantile_values)
+
+            # Remove the individual quantile_X entries from best_params
+            for key in quantile_keys:
+                del best_params[key]
+
+            # Add the quantile list back as a single entry
+            best_params['quantiles'] = quantile_values_json
+
+            # Log hyperparameters of best_params structure as obtained from optuna.Study.best_params
+            mlflow.log_params(best_params)
+
+            # Log CRPS score corresponding to best_params
+            mlflow.log_metric('CRPS', best_value)
+
+            # Create a dictionary with best_params and
+            model_specification = {
+                "best_params": best_params,
+            }
+
+            # Log the model_specification dict as a JSON string as an artifact
+            try:
+                dict_path = os.path.join(tmpdir, f"{model_name}_model_specification.json")
+
+                # Save the dictionary as a JSON file
+                with open(dict_path, 'w') as f:
+                    json.dump(model_specification, f)
+
+                mlflow.log_artifact(dict_path)  # Log the JSON file as an artifact
+            except Exception as e:
+                print("An error occured while logging the model_specifications as an artifact: ", e)
+
+    return run_id
+
+
+def ml_flow_logging_actual_baseline(model_name: str,
+                                    evaluation_year: int,
+                                    process: str,
+                                    validation_approach: str,
+                                    test_results_global_dict: dict,
+                                    test_results_all_countries: pd.DataFrame,
+                                    run_time: float):
+    # Check that process is either 'cross-validation' or 'model-testing'
+    assert process in ['cross-validation', 'model-testing'], \
+        "process variable must be either 'cross-validation' or 'model-testing'"
+    average_crps = test_results_global_dict["average_global_test_score"]
+    std_crps = test_results_global_dict["std_global_test_score"]
+    test_results_global = test_results_global_dict["test_results_global"]
+    run_time_formatted = seconds_to_format(run_time)
+    mlflow.set_experiment("baseline_model_actual")
+    with mlflow.start_run(run_name=model_name) as run:
+        # Create a temporary directory
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Log conceptual parameters
+            mlflow.log_param('model_name', model_name)
+            mlflow.log_param('evaluation_year', evaluation_year)
+            mlflow.log_param('process', process)
+            mlflow.log_param('validation_approach', validation_approach)
+            mlflow.log_param('run_time', run_time_formatted)
+            mlflow.log_metric('average_crps', average_crps)
+            mlflow.log_metric('std_crps', std_crps)
+
+            try:
+                # Save the DataFrame to a Parquet file
+                test_results_global_path = os.path.join(tmpdir, f"{model_name}_results_actuals_{evaluation_year}.parquet")
+                test_results_global.to_parquet(test_results_global_path)
+
+                # Log the Parquet file as an artifact
+                mlflow.log_artifact(test_results_global_path)
+            except Exception as e:
+                print("An error occurred while logging the actuals results as an artifact: ", e)
+
+            try:
+                # Save the DataFrame to a Parquet file
+                test_results_all_countries_path = os.path.join(tmpdir, f"{model_name}_results_all_countries{evaluation_year}.parquet")
+                test_results_all_countries.to_parquet(test_results_all_countries_path)
+
+                # Log the Parquet file as an artifact
+                mlflow.log_artifact(test_results_all_countries_path)
+            except Exception as e:
+                print("An error occurred while logging the actuals results as an artifact: ", e)
