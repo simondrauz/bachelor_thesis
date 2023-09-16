@@ -3,6 +3,13 @@ import subprocess
 import time
 import mlflow
 import socket
+import pandas as pd
+
+
+def map_country_id_to_country_name(country_id: int, country_mapping: pd.DataFrame) -> str:
+    # Determine country_name based upon entry in country_mapping with columns 'country_id' and 'name'
+    country_name = country_mapping[country_mapping['country_id'] == country_id]['name'].values[0]
+    return country_name
 
 
 def generate_datetime_list(start_year: int, start_month: int, end_year: int, end_month: int) -> list:
@@ -47,8 +54,7 @@ def seconds_to_format(seconds: float) -> str:
 
 
 class MLFlowServer:
-    def __init__(self, experiment_name: str, tracking_uri="http://127.0.0.1:5000"):
-        self.experiment_name = experiment_name
+    def __init__(self, tracking_uri="http://127.0.0.1:5000"):
         self.tracking_uri = tracking_uri
         self.process = None
 
@@ -68,7 +74,6 @@ class MLFlowServer:
             self.process = subprocess.Popen(["mlflow", "ui"])
             time.sleep(5)  # give it some time to start
             mlflow.set_tracking_uri(self.tracking_uri)
-            mlflow.set_experiment(self.experiment_name)
         else:
             print("MLflow server is already running or port 5000 is in use.")
 
