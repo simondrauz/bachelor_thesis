@@ -336,12 +336,12 @@ def add_year_column(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ToDo: Check functionality of quantile-based knot generation
-def generate_knots(data, num_knots, equal_spacing=True, quantile_spacing=False):
+def generate_knots(covariate_data, no_knots, equal_spacing=True, quantile_spacing=False):
     """
     Generate knot locations for spline basis functions.
 
     Args:
-    - data (array-like): Data on which to base the knot locations.
+    - covariate_data (array-like): Data on which to base the knot locations.
     - num_knots (int): Number of knots to generate.
     - method (str): Method to use for generating knots. Options are "equal_spacing" and "quantiles".
 
@@ -351,11 +351,11 @@ def generate_knots(data, num_knots, equal_spacing=True, quantile_spacing=False):
 
     if equal_spacing:
         # Equal spacing method
-        knots = np.linspace(data.min(), data.max(), num_knots + 2)[1:-1]
+        knots = np.linspace(covariate_data.min(), covariate_data.max(), no_knots + 2)[1:-1]
     elif quantile_spacing:
         # Quantiles method
-        quantiles = np.linspace(0, 1, num_knots + 2)[1:-1]
-        knots = np.quantile(data, quantiles)
+        quantiles = np.linspace(0, 1, no_knots + 2)[1:-1]
+        knots = np.quantile(covariate_data, quantiles)
 
     return knots
 
