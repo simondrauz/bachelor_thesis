@@ -418,3 +418,64 @@ def generate_data_dict_pre_modelling(data_transformation: str,
         'predictors': predictors,
         'target_variable': target_variable
     }
+
+
+def temporary_feature_selection(data: pd.DataFrame) -> pd.DataFrame:
+    """
+    Generate lagged features based on 'ged_sb' and 'ged_sb_sum_24'.
+
+    Parameters:
+        data (pd.DataFrame): DataFrame with columns 'month_id', 'country_id', 'ged_sb', 'ged_sb_sum_24'
+
+    Returns:
+        pd.DataFrame: DataFrame with lagged features and original columns
+    """
+
+    # Sort the data by 'country_id' and 'month_id'
+    data = data.sort_values(by=['country_id', 'month_id'])
+
+    # Initialize empty lists to store new column names
+    lagged_cols_ged_sb = []
+    lagged_cols_ged_sb_tsum_24 = []
+
+    # Generate lagged features for 'ged_sb' and 'ged_sb_sum_24'
+    for lag in range(3, 15):  # From 3 to 14 inclusive
+        lagged_col_ged_sb = f'ged_sb_tlag_{lag}'
+        lagged_col_ged_sb_tsum_24 = f'ged_sb_tsum_24_tlag_{lag}'
+
+        # Create lagged features
+        data[lagged_col_ged_sb] = data.groupby('country_id')['ged_sb'].shift(lag)
+        data[lagged_col_ged_sb_tsum_24] = data.groupby('country_id')['ged_sb_tsum_24'].shift(lag)
+
+        # Append new column names to lists
+        lagged_cols_ged_sb.append(lagged_col_ged_sb)
+        lagged_cols_ged_sb_tsum_24.append(lagged_col_ged_sb_tsum_24)
+
+    # Select columns to keep in the final DataFrame
+    cols_to_keep = ['month_id', 'country_id', 'ged_sb'] + lagged_cols_ged_sb + lagged_cols_ged_sb_tsum_24
+    data_return = data[cols_to_keep]
+
+    # Return DataFrame with selected columns
+    return data_return
+
+
+def temporary_standardization(data: pd.DataFrame) -> pd.DataFrame:
+    """
+    Standardize the lagged features in the DataFrame.
+
+    Parameters:
+        data (pd.DataFrame): DataFrame with lagged features
+
+    Returns:
+        pd.DataFrame: DataFrame with standardized lagged features
+    """
+    # Identify columns to standardize (lagged features)
+    cols_to_standardize = [col for col in data.columns if 'tlag' in col]
+
+    # Standardize each column
+    for col in cols_to_standardize:
+        mean_val = data[col].mean()
+        std_val = data[col].std()
+        data[col] = (data[col] - mean_val) / std_val
+
+    return data
