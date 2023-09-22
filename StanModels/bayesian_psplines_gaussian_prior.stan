@@ -1,14 +1,14 @@
 data {
     int<lower=1> N;          // Number of data points
-    int<lower=1> num_basis_X1;  // Number of coefficients for P-splines for X1
-    int<lower=1> num_basis_X2;  // Number of coefficients for P-splines for X2
+    int<lower=1> no_basis_X1;  // Number of coefficients for P-splines for X1
+    int<lower=1> no_basis_X2;  // Number of coefficients for P-splines for X2
 
-    matrix[N, num_basis_X1] basis_X1;  // Basis matrix for regressor X1
-    matrix[N, num_basis_X2] basis_X2;  // Basis matrix for regressor X2
+    matrix[N, no_basis_X1] basis_X1;  // Basis matrix for regressor X1
+    matrix[N, no_basis_X2] basis_X2;  // Basis matrix for regressor X2
     int Y[N];             // Observed Target variable
 
-    matrix[num_basis_X1, num_basis_X1] K_X1;  // Penalty matrix for X1
-    matrix[num_basis_X2, num_basis_X2] K_X2;  // Penalty matrix for X2
+    matrix[no_basis_X1, no_basis_X1] K_X1;  // Penalty matrix for X1
+    matrix[no_basis_X2, no_basis_X2] K_X2;  // Penalty matrix for X2
 
     real a_tau_X1;              // Shape parameter for InverseGamma of tau for X1
     real b_tau_X1;              // Scale parameter for InverseGamma of tau for X1
@@ -20,23 +20,23 @@ data {
     real<lower=0> intercept_sigma;     // Standard deviation of intercept prior
 
     int<lower=0> N_eval;                 // Number of data points for evaluation
-    matrix[N_eval, num_basis_X1] basis_X1_eval;    // Basis matrix for regressor X1_eval
-    matrix[N_eval, num_basis_X2] basis_X2_eval;    // Basis matrix for regressor X2_eval
+    matrix[N_eval, no_basis_X1] basis_X1_eval;    // Basis matrix for regressor X1_eval
+    matrix[N_eval, no_basis_X2] basis_X2_eval;    // Basis matrix for regressor X2_eval
     int Y_eval[N_eval];                            // Observed Target variable for evaluation
 }
 
 parameters {
     real intercept;                           // regression intercept
-    vector[num_basis_X1] spline_coefficients_X1; // Spline coefficients for X1
-    vector[num_basis_X2] spline_coefficients_X2; // Spline coefficients for X2
+    vector[no_basis_X1] spline_coefficients_X1; // Spline coefficients for X1
+    vector[no_basis_X2] spline_coefficients_X2; // Spline coefficients for X2
     real<lower=0> tau_X1;                        // Precision parameter for Gaussian random walk for X1
     real<lower=0> tau_X2;                      // Precision parameter for Gaussian random walk for X2
     real<lower=0> alpha;                      // Negative Binomial dispersion parameter
 }
 transformed parameters {
     vector[N] mu; // Mean of Negative Binomial distribution
-    matrix[num_basis_X1, num_basis_X1] precision_matrix_X1;  // precision matrix for X1
-    matrix[num_basis_X2, num_basis_X2] precision_matrix_X2;  // precision matrix for X2
+    matrix[no_basis_X1, no_basis_X1] precision_matrix_X1;  // precision matrix for X1
+    matrix[no_basis_X2, no_basis_X2] precision_matrix_X2;  // precision matrix for X2
 
     mu = exp(intercept + basis_X1 * spline_coefficients_X1 + basis_X2 * spline_coefficients_X2); //taking exponential as a link function of a GAM
 
@@ -51,8 +51,8 @@ model {
     tau_X2 ~ inv_gamma(a_tau_X2, b_tau_X2);  // Inverse Gamma prior for tau_X2
     alpha ~ gamma(a_alpha, b_alpha);              // Gamma prior for alpha
 
-    spline_coefficients_X1 ~ multi_normal_prec(rep_vector(0, num_basis_X1), precision_matrix_X1);  // Prior for spline coefficients for X1
-    spline_coefficients_X2 ~ multi_normal_prec(rep_vector(0, num_basis_X2), precision_matrix_X2);  // Prior for spline coefficients for X2
+    spline_coefficients_X1 ~ multi_normal_prec(rep_vector(0, no_basis_X1), precision_matrix_X1);  // Prior for spline coefficients for X1
+    spline_coefficients_X2 ~ multi_normal_prec(rep_vector(0, no_basis_X2), precision_matrix_X2);  // Prior for spline coefficients for X2
 
     // Likelihood
     Y ~ neg_binomial_2(mu, alpha);
