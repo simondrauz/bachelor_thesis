@@ -43,9 +43,30 @@ def fetch_model_run_config(model_name, data_specification: dict) -> dict:
             "data_generation_specification": {
                 # Note: if this is changed to dynamic, it has to be considered in logging mlflow cal because
                 #       mlflow.params doesn't expect nested dictionaries
-                "covariates": ["ged_sb_tlag_1", "ged_sb_tsum_24"],
+                # We change the inputs dynamically with the forecast horizon to use the most recent data as input
+                "covariates": {
+                    "general_covariates": [],
+                    "horizon_specific_covariates": {
+                        "forecast_horizon_3": ['ged_sb_tlag_3', 'ged_sb_tsum_24_tlag_3'],
+                        "forecast_horizon_4": ['ged_sb_tlag_4', 'ged_sb_tsum_24_tlag_4'],
+                        "forecast_horizon_5": ['ged_sb_tlag_5', 'ged_sb_tsum_24_tlag_5'],
+                        "forecast_horizon_6": ['ged_sb_tlag_6', 'ged_sb_tsum_24_tlag_6'],
+                        "forecast_horizon_7": ['ged_sb_tlag_7', 'ged_sb_tsum_24_tlag_7'],
+                        "forecast_horizon_8": ['ged_sb_tlag_8', 'ged_sb_tsum_24_tlag_8'],
+                        "forecast_horizon_9": ['ged_sb_tlag_9', 'ged_sb_tsum_24_tlag_9'],
+                        "forecast_horizon_10": ['ged_sb_tlag_10', 'ged_sb_tsum_24_tlag_10'],
+                        "forecast_horizon_11": ['ged_sb_tlag_11', 'ged_sb_tsum_24_tlag_11'],
+                        "forecast_horizon_12": ['ged_sb_tlag_12', 'ged_sb_tsum_24_tlag_12'],
+                        "forecast_horizon_13": ['ged_sb_tlag_13', 'ged_sb_tsum_24_tlag_13'],
+                        "forecast_horizon_14": ['ged_sb_tlag_14', 'ged_sb_tsum_24_tlag_14'],
+                    }
+                },
                 "target_variable": "ged_sb",
                 "spline_degree": 3,
+                "random_walk_order": {
+                    "random_walk_order_X1": 1,
+                    "random_walk_order_X2": 1
+                }
                 # OPTIONAL: Consider adding specification of penalty order here
             },
             "model_hyperparameter_settings": {
@@ -106,7 +127,7 @@ def fetch_model_run_config(model_name, data_specification: dict) -> dict:
     stan_model = config[model_name]["stan_model_code"]
     sampling_parameters = config["sampling_parameters"]
     data_generation_specification = config[model_name]["data_generation_specification"]
-    model_hyperparameters_setting = config[model_name]["model_hyperparameters_setting"]
+    model_hyperparameter_settings = config[model_name]["model_hyperparameter_settings"]
     descritive_values = {
         "model_name": config[model_name]["model_name"],
         "prior_specification": config[model_name]["prior_specification"]
@@ -116,7 +137,7 @@ def fetch_model_run_config(model_name, data_specification: dict) -> dict:
         "stan_model_code": stan_model,
         "sampling_parameters": sampling_parameters,
         "data_generation_specification": data_generation_specification,
-        "model_hyperparameters_setting": model_hyperparameters_setting,
+        "model_hyperparameter_settings": model_hyperparameter_settings,
         "descriptive_values": descritive_values,
         "data_specification": data_specification,
     }
