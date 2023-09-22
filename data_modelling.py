@@ -13,6 +13,8 @@ from pandas import DataFrame
 
 from data_logging import (mlflow_logging_optuna_bayesian,
                           mlflow_logging_optuna_baseline, ml_flow_logging_actual_baseline)
+from help_functions import seconds_to_format
+from mappings import map_month_id_to_datetime
 
 
 class HyperparameterTuning:
@@ -22,11 +24,11 @@ class HyperparameterTuning:
                  k_fold_iterations: int,
                  forecast_horizon: int,
                  target_variable: str,
-                 covariates: Optional[List[str]] = None,
+                 covariates_dict: Optional[Dict] = None,
                  rolling_window_length: Optional[int] = None,
                  stan_model: Optional[pystan.StanModel] = None,
                  data_generation_specification: Optional[Dict] = None,
-                 model_hyperparameters_setting: Optional[Dict] = None,
+                 model_hyperparameter_settings: Optional[Dict] = None,
                  cross_validation_settings: Optional[Dict] = None,
                  sampling_parameters: Optional[Dict] = None,
                  validate_on_horizon: Optional[bool] = None,
@@ -38,11 +40,11 @@ class HyperparameterTuning:
         self.k_fold_iterations = k_fold_iterations
         self.forecast_horizon = forecast_horizon
         self.target_variable = target_variable
-        self.covariates = covariates
+        self.covariates_dict = covariates_dict
         self.rolling_window_length = rolling_window_length
         self.stan_model = stan_model
         self.data_generation_specification = data_generation_specification
-        self.model_hyperparameters_setting = model_hyperparameters_setting
+        self.model_hyperparameter_settings = model_hyperparameter_settings
         self.cross_validation_settings = cross_validation_settings
         self.sampling_parameters = sampling_parameters
         self.validate_on_horizon = validate_on_horizon
@@ -58,11 +60,11 @@ class HyperparameterTuning:
             k_fold_iterations=self.k_fold_iterations,
             forecast_horizon=self.forecast_horizon,
             target_variable=self.target_variable,
-            covariates=self.covariates,
+            covariates_dict=self.covariates_dict,
             rolling_window_length=self.rolling_window_length,
             stan_model=self.stan_model,
             data_generation_specification=self.data_generation_specification,
-            model_hyperparameters_setting=self.model_hyperparameters_setting,
+            model_hyperparameter_settings=self.model_hyperparameter_settings,
             cross_validation_settings=self.cross_validation_settings,
             sampling_parameters=self.sampling_parameters,
             validate_on_horizon=self.validate_on_horizon,
@@ -80,7 +82,8 @@ class HyperparameterTuning:
 
 # Note: Currently implementation for training on forecast horizons only, also consider the assumptions
 def run_model(evaluation_year: int, model_name: str, actuals: pd.DataFrame, training_data: pd.DataFrame,
-              model_run_config: dict, optuna_trials: int, validate_on_horizon: bool, validate_on_horizon_and_month: bool,
+              model_run_config: dict, optuna_trials: int, validate_on_horizon: bool,
+              validate_on_horizon_and_month: bool,
               is_bayesian_model: bool,
               is_baseline_model: bool,
               country_mapping: Optional[pd.DataFrame] = None,
@@ -118,20 +121,47 @@ def run_model(evaluation_year: int, model_name: str, actuals: pd.DataFrame, trai
     # Ensure that one of the model identifiers is set to true
     assert is_bayesian_model is True or is_baseline_model is True, \
         'One of the model identifiers has to be set to true'
+    # transform bools into text for mlflow logging later on
+    if validate_on_horizon:
+        validation_approach = "forecast_horizon"
+    else:
+        validation_approach = "forecast_horizon_and_month"
 
     # Retrieve cross-validation settings from config
     cross_validation_settings = model_run_config['cross_validation_settings']
     # Retrieve K-Fold information from config
     k_fold_iterations = cross_validation_settings['k_fold_iterations']
 
+    # Extract country_ids of countries which do have data within the evaluation period
+    country_ids = sorted(actuals['country_id'].unique())
+    if is_baseline_model:
+        tuning_iterations = (len(country_ids) * len(actuals['month_id'].unique()) * optuna_trials)
+    elif is_bayesian_model:
+        tuning_iterations = (len(actuals['month_id'].unique()) * optuna_trials)
+
+    print(f"Data Pipeline for evaluation year {evaluation_year} has been started with the following specifications: \n"
+          f"model_name={model_name}, \n"
+          f"validation_approach={validation_approach}, \n"
+          f"k_fold_iterations={k_fold_iterations}, \n"
+          f"optuna_trials={optuna_trials}, \n"
+          f"no. of countries={len(country_ids)}) \n")
+
+    if is_baseline_model:
+        if validate_on_horizon:
+            print(
+                f"The tuning process will have a total of {tuning_iterations} iterations with 12 model trained in each "
+                "iteration")
+        else:
+            print(
+                f"The tuning process will have a total of {tuning_iterations} iterations with 1 model trained in each "
+                "iteration")
+
+    if is_bayesian_model:
+        print(f"The tuning process will have a total of {tuning_iterations} iterations with 1 model trained in each "
+              "iteration")
+
     # Calculate min and max forecast horizon corresponding to actuals data
     forecast_horizon_min, forecast_horizon_max = calculate_min_max_forecast_horizon(actuals, cross_validation_settings)
-
-    # transform bools into text for mlflow logging later on
-    if validate_on_horizon:
-        validation_approach = "forecast_horizon"
-    else:
-        validation_approach = "forecast_horizon_and_month"
 
     # Create an empty dictionary to store the results of the hyperparameter tuning process
     hyperparameter_tuning_results = {}
@@ -148,9 +178,13 @@ def run_model(evaluation_year: int, model_name: str, actuals: pd.DataFrame, trai
         #       change the rest of the code.
         #       We would need to add dictionary to the config file for the covariates in dependence on the forecast
         #       horizon
-        (stan_model, sampling_parameters, data_generation_specification, model_hyperparameters_setting,
+        (stan_model, sampling_parameters, data_generation_specification, model_hyperparameter_settings,
          data_specification, descriptive_values) = unpack_model_configuration(
             model_run_config, is_bayesian_model=is_bayesian_model)
+        # Retrieve covariates_dict from config
+        # ToDo: Decide on one approach (data_specification bs data_generation_specification), dependent on how
+        #  we solve actuals covariate data issue
+        covariates_dict = data_generation_specification['covariates']
 
         # Compile the stan model before running the hyperparameter tuning process
         try:
@@ -160,16 +194,20 @@ def run_model(evaluation_year: int, model_name: str, actuals: pd.DataFrame, trai
                 f'An error has occured while compiling Stan Model with Exception: {e}. The corresponding values are: \n'
                 f'stan_model={stan_model}')
 
+        forecast_tuning_times = []
+        forecast_horizon_iterator = 0
+        print(f"Start Hyperparameter tuning on forecast horizons {forecast_horizon_min} to {forecast_horizon_max} "
+              f"for all countries simultaneously for evaluation_year {evaluation_year}.")
+        # Initiate forecast_horizon iterator
         # Iterate over forecast horizons to train the model on different forecast horizons
         for forecast_horizon in range(forecast_horizon_min, forecast_horizon_max + 1):
+            print(f"Start iteration on forecast horizon {forecast_horizon}...")
+            start_tuning_time_forecast_horizon = time.time()
             # Retrieve target variable from config
             target_variable = data_specification['target_variable']
-            # Retrieve covariates from config
-            # ToDo: Decide on one approach (data_specification bs data_generation_specification), dependent on how
-            #  we solve actuals covariate data issue
-            covariates = data_generation_specification['covariates']
+
             # Calculate the length of the rolling window used in each fold
-            rolling_window_length = calculate_rolling_window_length(training_data, k_fold_iterations)
+            rolling_window_length = calculate_rolling_window_length(training_data, k_fold_iterations, forecast_horizon)
             # Run hyperparameter tuning on forecast horizon
             # ToDo: Check if this works as intended
             # OPTIONAL: Consider logging/ storing the results of the hyperparameter tuning process (bayes)
@@ -178,20 +216,25 @@ def run_model(evaluation_year: int, model_name: str, actuals: pd.DataFrame, trai
                                          k_fold_iterations=k_fold_iterations,
                                          forecast_horizon=forecast_horizon,
                                          target_variable=target_variable,
-                                         covariates=covariates,
+                                         covariates_dict=covariates_dict,
                                          rolling_window_length=rolling_window_length,
                                          stan_model=stan_model,
                                          data_generation_specification=data_generation_specification,
                                          cross_validation_settings=cross_validation_settings,
-                                         model_hyperparameters_setting=model_hyperparameters_setting,
+                                         model_hyperparameter_settings=model_hyperparameter_settings,
                                          sampling_parameters=sampling_parameters,
                                          validate_on_horizon=validate_on_horizon,
                                          validate_on_horizon_and_month=validate_on_horizon_and_month,
                                          is_bayesian_model=is_bayesian_model)
 
+            print(f"Start Hyperparameter tuning on forecast horizon {forecast_horizon} "
+                  f"for evaluation_year {evaluation_year} with validation approach {validation_approach}...")
+            start_tuning_time = time.time()
             # Run the optimization and get the study object and best parameters
             study_object, best_params, best_value = tuner.run_optimization(n_trials=optuna_trials)
-
+            end_tuning_time = time.time() - start_tuning_time
+            print(f"Hyperparameter tuning for forecast horizon {forecast_horizon} finished in "
+                  f"{seconds_to_format(end_tuning_time)}")
             # Log the results of the hyperparameter tuning process
             run_id = mlflow_logging_optuna_bayesian(model_name=model_name,
                                                     evaluation_year=evaluation_year,
@@ -214,9 +257,19 @@ def run_model(evaluation_year: int, model_name: str, actuals: pd.DataFrame, trai
                  "run_id": run_id,
                  "cross_validation_score": best_value},
                 ignore_index=True)
+            forecast_horizon_iterator += 1
+            end_tuning_time_forecast_horizon = time.time() - start_tuning_time_forecast_horizon
+            print(f" Iteration on forecast horizon {forecast_horizon} finished in"
+                  f" {seconds_to_format(end_tuning_time_forecast_horizon)}")
+            forecast_tuning_times.append(end_tuning_time_forecast_horizon)
+            average_forecast_tuning_time = np.mean(forecast_tuning_times)
+            remaining_forecast_tuning_time = ((forecast_horizon_max - forecast_horizon_min) + 1 -
+                                              forecast_horizon_iterator) * average_forecast_tuning_time
+            print(f"Estimated time remaining for tuning process: {seconds_to_format(remaining_forecast_tuning_time)}")
 
         # ToDo: Implement hyperparameter retrieving using the otuna study objects, either by taking best parameters from
         #       study object or from the exported data in mlflow log (if done), same for baseline
+        print("Calculate models for actuals data...")
         # Run final model on best parameter configurations obtained from cross-validation process
         actuals_results = compute_stan_model_actual(actuals, training_data, stan_model, best_runs_cross_validation,
                                                     cross_validation_settings)
@@ -228,18 +281,14 @@ def run_model(evaluation_year: int, model_name: str, actuals: pd.DataFrame, trai
             columns=['country_id', 'month_id', 'forecast_horizon', 'test_score', 'run_id'])
 
         # Unpack the rest of model_run_config dictionary
-        (model_hyperparameters_setting, data_specification, descriptive_values) = unpack_model_configuration(
+        (model_hyperparameter_settings, data_specification, descriptive_values) = unpack_model_configuration(
             model_run_config, is_baseline_model=is_baseline_model)
-
-        # Extract country_ids of countries which do have data within the evaluation period
-        country_ids = sorted(actuals['country_id'].unique())
 
         # ToDo: Remove
         # Filter country_ids on countries 133, 124, 220 for testing purposes
         # country_ids = [133, 124, 220]
         # Take last 20 entries of list country_ids
-        country_ids = country_ids[-2:]
-
+        # country_ids = country_ids[-2:]
 
         # Retrieve target variable from config
         target_variable = data_specification['target_variable']
@@ -247,7 +296,12 @@ def run_model(evaluation_year: int, model_name: str, actuals: pd.DataFrame, trai
         # Note: originally loop over horizons and then over countries, which is more performant (less joins, less appends),
         #       however this it's a trade-off between performance and readability
         # Iterate over each country
+        country_tuning_times = []
+        # Iterator to track the number of countries for which the tuning process has been finished
+        country_iterator = 0
+        print(f"Start Hyperparameter tuning on {len(country_ids)} countries for evaluation_year {evaluation_year}.")
         for country_id in country_ids:
+            start_tuning_time_country = time.time()
             # Create empty data frame to store best results of cross validation process for a single country
             best_runs_cross_validation_country = pd.DataFrame(
                 columns=["forecast_horizon", "country_id", "run_id", "cross_validation_score"])
@@ -258,22 +312,44 @@ def run_model(evaluation_year: int, model_name: str, actuals: pd.DataFrame, trai
             # Iterate over forecast horizons to train the model on different forecast horizons
             for forecast_horizon in range(forecast_horizon_min, forecast_horizon_max + 1):
                 # toDo: Check if we need this for the bayesian model as well
-                # determine how many training months are needed for the biggest values for rolling window length and
-                # forecast horizon
+                # Respective to the actuals data, we want to determine how many months we need to perform out
+                # cross-validation process. This is calculated here in a first step.
+                # Idea: The first cv-set is at most K times the length of the actuals data ahead of the first
+                #       actuals month. In our case K years.
+                #       For this set we would additionally need the current forecast_horizon and the maximum
+                #       rolling_window_length for training.
+                maximum_months_needed_before_eval_year = (
+                        model_hyperparameter_settings["rolling_window_length"]["range"][1] +
+                        forecast_horizon +
+                        k_fold_iterations * len(actuals_country_specific))
 
+                # ToDo: adjust for true future prediction of 2024
+                #       Probably the easiest way is to adjust the code so each the training input goes until Oct before
+                #       the evaluation year. However we should also consider the change of competition rules in the
+                #       forecasting period
+                # This differentiation pays respect to the fact that Nov20 and Dec20 are not available
+                if evaluation_year == 2021:
+                    months_available_before_eval_year = len(training_data_country_specific)
+                else:
+                    months_available_before_eval_year = (
+                            actuals['month_id'].min() - training_data_country_specific['month_id'].min())
 
-                maximum_months_needed = (model_hyperparameters_setting["rolling_window_length"]["range"][1] +
-                                         forecast_horizon +
-                                         ((k_fold_iterations) * len(actuals_country_specific)))
-                # change k_fold_iterations if data is not sufficient
-                if len(training_data_country_specific) < maximum_months_needed:
-                    # Determine how many k fold iterations are possible with the available data
-                    months_available_for_cv_sets = (len(training_data_country_specific) -
-                                                    model_hyperparameters_setting["rolling_window_length"]["range"][1] -
-                                                    forecast_horizon -
-                                                    # ToDo: Adjustment to reflect missing Nov, Dec for last validation
-                                                    #       set. Remove if other approach taken.
-                                                    10)
+                # Some countries may not have sufficient data for the intended K Fold iterations which is why they have
+                # to be adjusted in those cases
+                if months_available_before_eval_year < maximum_months_needed_before_eval_year:
+                    # Determine how many k fold iterations are possible with the available data dependent on the
+                    # true future evaluation set
+                    # I want to explain it as follows:
+                    # if we are in the year 2018, 2019, 2020 this will deduct the maximum rolling window length and the
+                    # current forecast horizon from the available months before the evaluation year and then return the
+                    # number of full years which fit into the remaining months. This will be the years from Jan till Dec
+                    # before the evaluation year used as cv sets
+                    # if we are in the year 2021 we also calculate the remaining full years, however the data for the
+                    # cross validation sets ranges from Nov(t) till Oct(t+K-1). For further context compare the
+                    # for get_validation_months_for_fold function
+                    months_available_for_cv_sets = (months_available_before_eval_year -
+                                                    model_hyperparameter_settings["rolling_window_length"]["range"][1] -
+                                                    forecast_horizon)
                     k_fold_iterations = months_available_for_cv_sets // len(actuals_country_specific)
 
                 # OPTIONAL: Consider logging/ storing the results of the hyperparameter tuning process (baseline)
@@ -283,19 +359,21 @@ def run_model(evaluation_year: int, model_name: str, actuals: pd.DataFrame, trai
                                              k_fold_iterations=k_fold_iterations,
                                              forecast_horizon=forecast_horizon,
                                              target_variable=target_variable,
-                                             model_hyperparameters_setting=model_hyperparameters_setting,
+                                             model_hyperparameter_settings=model_hyperparameter_settings,
                                              validate_on_horizon=validate_on_horizon,
                                              validate_on_horizon_and_month=validate_on_horizon_and_month,
                                              is_baseline_model=is_baseline_model)
 
                 print(
-                    f"Start Hyperparameter tuning for country {country_id} and forecast horizon {forecast_horizon} "
-                    f"and evaluation_year {evaluation_year}...")
+                    f"Start Hyperparameter tuning on country {country_id} and forecast horizon {forecast_horizon} "
+                    f"for evaluation_year {evaluation_year} with validation approach {validation_approach}...")
+                start_tuning_time = time.time()
                 # Run the optimization and get the study object and best parameters
                 study_object, best_params, best_value = tuner.run_optimization(n_trials=optuna_trials)
+                end_tuning_time = time.time() - start_tuning_time
                 print(
                     f"Hyperparameter tuning for country {country_id} and forecast horizon {forecast_horizon} "
-                    f"and evaluation_year {evaluation_year} finished.")
+                    f"and evaluation_year {evaluation_year} finished in {seconds_to_format(end_tuning_time)}.")
 
                 run_id = mlflow_logging_optuna_baseline(model_name=model_name,
                                                         evaluation_year=evaluation_year,
@@ -326,12 +404,25 @@ def run_model(evaluation_year: int, model_name: str, actuals: pd.DataFrame, trai
                      "country_id": country_id
                      },
                     ignore_index=True)
+                end_tuning_time_country = time.time() - start_tuning_time_country
 
             # Run final model on best parameter configurations obtained from cross-validation process
             test_result_country = compute_baseline_model_actual(
-                actuals_country_specific, training_data_country_specific, best_runs_cross_validation_country, model_name)
+                actuals_country_specific, training_data_country_specific, best_runs_cross_validation_country,
+                model_name)
             # Append the results for the country to the results for all countries
             test_results_all_countries = test_results_all_countries.append(test_result_country, ignore_index=True)
+            end_tuning_time_country = time.time() - start_tuning_time_country
+            print(f'Finished tuning for country {country_id} and calculating on actuals in '
+                  f'{seconds_to_format(end_tuning_time_country)}')
+            country_tuning_times.append(end_tuning_time_country)
+            country_iterator += 1
+            average_country_tuning_time = np.mean(country_tuning_times)
+            # Calculate estimated remaining tuning time based on average tuning time per country and remaining countries
+            # in for loop
+            remaining_tuning_time = (len(country_ids) - country_iterator) * average_country_tuning_time
+            print(f'Estimated remaining tuning time: {seconds_to_format(remaining_tuning_time)} '
+                  f'for evaluation year {evaluation_year}')
 
         # Group by 'forecast_horizon' and 'month_id' and calculate the mean and std of 'cross_validation_score'
         test_results_global = test_results_all_countries.groupby(['forecast_horizon', 'month_id'])[
@@ -390,12 +481,13 @@ def calculate_min_max_forecast_horizon(actuals: pd.DataFrame, cross_validation_s
     return forecast_horizon_min, forecast_horizon_max
 
 
-def calculate_rolling_window_length(training_data: pd.DataFrame, k: int) -> int:
+def calculate_rolling_window_length(training_data: pd.DataFrame, k: int, forecast_horizon: int) -> int:
     """
     Calculate the length of the rolling window for the specified number of folds. The length of the rolling window is
     dependent on the number of folds and corresponds to the maximum number of months that can be used for validating
     first cross-validation set. This is only needed for the Bayesian model.
     Args:
+        forecast_horizon:
         training_data: DataFrame containing the training data for the cross-validation process
         k: indicates which fold iteration we are in
     Returns:
@@ -404,11 +496,15 @@ def calculate_rolling_window_length(training_data: pd.DataFrame, k: int) -> int:
     # Retrieve last month in training data
     last_observation_month = get_last_observation_month(training_data)
 
+    # ToDo: Check abbreviation for Quick fix for missing Nov, Dec for last validation set, remove if other approach
+    #       taken
     # Shift the last observation date by K years to determine last training month of first k fold
     last_training_month = last_observation_month - 12 * k
 
-    # Find the first observation date in the training data
-    first_observation_month = training_data['month_id'].min()
+    # ToDo: Implement modularity for rolling window if lag features are used  (do not add forecast horizon if not)
+    # Find the first observation date in the training data and adjust by forecast_horizon as lag features not available
+    # for first observations
+    first_observation_month = training_data['month_id'].min() + forecast_horizon
 
     # Calculate the number of months comprised by first observed month and last training month
     rolling_window_length = last_training_month - first_observation_month + 1
@@ -449,24 +545,24 @@ def unpack_model_configuration(model_run_config: dict, is_bayesian_model: Option
     # Unpack the model_run_config dictionary
     stan_model = model_run_config.get("stan_model_code", None)
     data_generation_specification = model_run_config.get("data_generation_specification", None)
-    model_hyperparameters_setting = model_run_config.get("model_hyperparameter_settings", None)
+    model_hyperparameter_settings = model_run_config.get("model_hyperparameter_settings", None)
     sampling_parameters = model_run_config.get("sampling_parameters", None)
     data_specification = model_run_config["data_specification"]
     descriptive_values = model_run_config["descriptive_values"]
 
     if is_bayesian_model is True:
-        return (stan_model, sampling_parameters, data_generation_specification, model_hyperparameters_setting,
+        return (stan_model, sampling_parameters, data_generation_specification, model_hyperparameter_settings,
                 data_specification, descriptive_values)
     elif is_baseline_model is True:
-        return (model_hyperparameters_setting, data_specification, descriptive_values)
+        return (model_hyperparameter_settings, data_specification, descriptive_values)
 
 
 def run_hyperparameter_tuning(trial, actuals: pd.DataFrame, training_data: pd.DataFrame, k_fold_iterations: int,
-                              forecast_horizon: int, target_variable: str, covariates: list,
+                              forecast_horizon: int, target_variable: str, covariates_dict: dict,
                               rolling_window_length: Optional[int] = None,
                               stan_model: Optional[pystan.StanModel] = None,
                               data_generation_specification: Optional[dict] = None,
-                              model_hyperparameters_setting: Optional[dict] = None,
+                              model_hyperparameter_settings: Optional[dict] = None,
                               cross_validation_settings: Optional[dict] = None,
                               sampling_parameters: Optional[dict] = None, validate_on_horizon: Optional[bool] = None,
                               validate_on_horizon_and_month: Optional[bool] = None,
@@ -476,7 +572,7 @@ def run_hyperparameter_tuning(trial, actuals: pd.DataFrame, training_data: pd.Da
     Args:
         cross_validation_settings:
         data_generation_specification:
-        covariates:
+        covariates_dict:
         trial: optuna trial object
         actuals: test set after cross-validation process
         training_data: DataFrame containing the training data for the cross-validation process
@@ -486,7 +582,7 @@ def run_hyperparameter_tuning(trial, actuals: pd.DataFrame, training_data: pd.Da
         target_variable:
         rolling_window_length: Optional parameter as only needed for Bayesian model.
         stan_model:  Optional parameter as only needed for Bayesian model.
-        model_hyperparameters_setting: dict containing information about the hyperparameters to be tuned
+        model_hyperparameter_settings: dict containing information about the hyperparameters to be tuned
         sampling_parameters: Optional parameter as only needed for Bayesian model.
         validate_on_horizon: indicates whether the model should be cross-validated on forecast horizons only
         validate_on_horizon_and_month: indicates whether the model should be cross-validated on forecast horizons and
@@ -504,36 +600,63 @@ def run_hyperparameter_tuning(trial, actuals: pd.DataFrame, training_data: pd.Da
     # Generate empty list to store the CRPS scores of single k_fold validation sets
     crps_scores_k_fold_iterations = []
     # Iterate over the number of folds
-    for k in range(1, k_fold_iterations+1):
+    for k in range(1, k_fold_iterations + 1):
         # Retrieve the validation set for the current fold
-        validation_set = get_validation_set_for_fold(actuals, training_data, k, forecast_horizon, target_variable,
-                                                     covariates, validate_on_horizon, validate_on_horizon_and_month,
-                                                     is_baseline_model=is_baseline_model,
-                                                     is_bayesian_model=is_bayesian_model)
-
+        validation_set_months = get_validation_months_for_fold(actuals, training_data, k, forecast_horizon,
+                                                               validate_on_horizon, validate_on_horizon_and_month,
+                                                               is_baseline_model=is_baseline_model,
+                                                               is_bayesian_model=is_bayesian_model)
         # Generate empty list to store the CRPS scores for the validation set
         crps_scores_val_set = []
-        # Iterate over the months to be forecasted
-        for val_month in validation_set['month_id']:
-            # Train model on training set and cross-validate on validation month using the specified model
-            if is_bayesian_model is True:
-                # Retrieve the training set corresponding to current validation month
-                train_set = get_train_set_for_fold(training_data, val_month, forecast_horizon, rolling_window_length,
-                                                   target_variable, covariates, is_bayesian_model=is_bayesian_model)
-                crps_val_month = compute_stan_model(trial, stan_model, data_generation_specification,
-                                                    cross_validation_settings, model_hyperparameters_setting,
-                                                    sampling_parameters, train_set, val_month, target_variable,
-                                                    covariates)
-            if is_baseline_model is True:
+        # Note:
+        #  For performance gain, we could consider training the model once on training data till
+        #  validation_set.min() - forecast horizon and then evaluating all validation months together (instead of
+        #  training the model for each validation month separately with up to 11 months additional data). Although
+        #  this setting is not reproducing the actual forecasting task (how would we have the input features for all
+        #  validation months at the forecast origin), the training on all months of the year is still justified as we
+        #  may gain generalization patterns which could get lost compared to limiting us on the specific months
+        #  corresponding to the forecast horizon. Training on months till validation_set.max() - forecast horizon
+        #  cannot be justified as this would cause target leakage.
+        #  In the following we attempt to implement the performance gain approach.
+        # Iterate over months to be forecasted
+
+        if is_bayesian_model is True:
+            # Get covariates corresponding to the current forecast horizon from data_generation_specification
+            covariates = get_covarariates_for_forecast_horizon(covariates_dict, forecast_horizon)
+            # Select the columns to be used for training the model
+            training_data = training_data[['month_id'] + [target_variable] + covariates]
+            # Determine first month in validation set, this will be used to determine a training set, that does not
+            # contain any data we wouldn't have at the forecast origin normally
+            first_validation_month = validation_set_months['month_id'].min()
+            # Retrieve the training set corresponding to current validation month
+            train_set = get_train_set_for_fold(training_data, first_validation_month, forecast_horizon,
+                                               rolling_window_length,
+                                               target_variable, covariates, is_bayesian_model=is_bayesian_model)
+            # Get the validation data corresponding to the set of validation months (validation set)
+            validation_set = training_data[training_data['month_id'].isin(validation_set_months['month_id'])]
+            crps_average_over_val_months = compute_stan_model(trial, stan_model, data_generation_specification,
+                                                              cross_validation_settings, model_hyperparameter_settings,
+                                                              sampling_parameters, train_set, validation_set,
+                                                              target_variable,
+                                                              covariates)
+            # Append the CRPS score to the list
+            crps_scores_val_set.append(crps_average_over_val_months)
+
+        elif is_baseline_model is True:
+            training_data = training_data[['month_id'] + [target_variable]]
+            for val_month in validation_set_months['month_id']:
+                # Train model on training set and cross-validate on validation month using the specified model
                 # Note: as for the baseline the length of the train set is a hyperparameter itself, it its specified
                 #       within the compute_baseline_model function
-                crps_val_month = compute_baseline_model(trial, training_data, val_month, model_hyperparameters_setting,
+                crps_val_month = compute_baseline_model(trial, training_data, val_month, model_hyperparameter_settings,
                                                         forecast_horizon, target_variable)
-            # Append the CRPS score to the list
-            crps_scores_val_set.append(crps_val_month)
-        # Depending on the validation approach crps_scores_val_set contains the CRPS scores for a single month or
-        # similar to number of months in actual
+                # Append the CRPS score to the list
+                crps_scores_val_set.append(crps_val_month)
+        # crps_scores_val_set
+        # (i) baseline: either 1 month or 12 months
+        # (ii) bayesian: either 1 month or average over 12 months
         # Calculate the average CRPS score for the validation set
+        # Note: This averaging is redundant in some cases, but does no harm
         average_crps_val_set = np.mean(crps_scores_val_set)
         # Append the average CRPS score of one fold to the k_fold_iterations list
         crps_scores_k_fold_iterations.append(average_crps_val_set)
@@ -546,17 +669,16 @@ def run_hyperparameter_tuning(trial, actuals: pd.DataFrame, training_data: pd.Da
 
 # ToDo: Inspect if it's sufficient to return the months as set because we obtain the actual value from training data in
 #       cross validation process
-def get_validation_set_for_fold(actuals: pd.DataFrame, training_data: pd.DataFrame, k: int, forecast_horizon: int,
-                                target_variable, covariates: list, validate_on_horizon: Optional[bool] = None,
-                                validate_on_horizon_and_month: Optional[bool] = None,
-                                is_baseline_model: Optional[bool] = None,
-                                is_bayesian_model: Optional[bool] = None) -> pd.DataFrame:
+def get_validation_months_for_fold(actuals: pd.DataFrame, training_data: pd.DataFrame, k: int, K: int,
+                                   forecast_horizon: int,
+                                   validate_on_horizon: Optional[bool] = None,
+                                   validate_on_horizon_and_month: Optional[bool] = None,
+                                   is_baseline_model: Optional[bool] = None,
+                                   is_bayesian_model: Optional[bool] = None) -> pd.DataFrame:
     """
     Get the validation set for the specified fold.
     Note: If we validate on forecast horizon and month this function will return a single month only.
     Args:
-        covariates:
-        target_variable:
         forecast_horizon: forecast horizon in months
         validate_on_horizon: indicates whether the model should be cross-validated on forecast horizons only
         validate_on_horizon_and_month: indicates whether the model should be cross-validated on forecast horizons and
@@ -580,11 +702,15 @@ def get_validation_set_for_fold(actuals: pd.DataFrame, training_data: pd.DataFra
     #                          Keeping of time order should be ensured (e.g. sort validation set)
     # Derive validation sets from actuals data
     # First month in validation set
-    first_validation_month = actuals['month_id'].min() - 12 * k - 12
+    first_validation_month = actuals['month_id'].min() - 12 * k
+    months_available_for_validation = training_data["month_id"].max - (first_validation_month - 1)
 
     if validate_on_horizon is True:
-        # Last month in validation set
-        last_validation_month = actuals['month_id'].max() - 12 * k - 12
+        if months_available_for_validation < 12:
+            last_validation_month = first_validation_month - 1 + months_available_for_validation
+        else:
+            # Last month in validation set
+            last_validation_month = actuals['month_id'].max() - 12 * k
         # Get validation set
         validation_set = training_data[training_data['month_id'].between(first_validation_month, last_validation_month)]
 
@@ -592,14 +718,21 @@ def get_validation_set_for_fold(actuals: pd.DataFrame, training_data: pd.DataFra
     if validate_on_horizon_and_month is True:
         # Calculate the validation month in accordance to forecast horizon
         validation_month = first_validation_month + forecast_horizon - 3
-        # Get validation set
-        validation_set = training_data[training_data['month_id'] == validation_month]
+        # Check if there is a corresponding observation in training_data
+        if validation_month not in training_data['month_id'].values:
+            print(f"Validation month_ {map_month_id_to_datetime(validation_month)} not in training data. For validating"
+                  f"on forecast_horizon we leave this month out of the validation set, for validating on "
+                  f"forecast_horizon + month we perform a fold of the year one ahead of the first forecast_horizon.")
+            validation_month_adjusted = validation_month - 12 * K
+            validation_set = training_data[training_data['month_id'] == validation_month_adjusted]
+        else:
+            # Get validation set
+            validation_set = training_data[training_data['month_id'] == validation_month]
 
-    # ToDo: Check if its suitable to drop the month_id column
     if is_bayesian_model is True:
-        return validation_set[['month_id'] + [target_variable] + covariates]
+        return validation_set[['month_id']]
     elif is_baseline_model is True:
-        return validation_set[['month_id'] + [target_variable]]
+        return validation_set[['month_id']]
 
 
 def get_train_set_for_fold(training_data: pd.DataFrame, validation_month: int, forecast_horizon: int,
@@ -635,8 +768,9 @@ def get_train_set_for_fold(training_data: pd.DataFrame, validation_month: int, f
 
 
 def compute_stan_model(trial: optuna.Trial, stan_model: pystan.StanModel, data_generation_specification: dict,
-                       cross_validation_settings: dict, model_hyperparameters_setting: dict, sampling_parameters: dict,
-                       train_set: pd.DataFrame, validation_month: int, target_variable: str, covariates: list) -> float:
+                       cross_validation_settings: dict, model_hyperparameter_settings: dict, sampling_parameters: dict,
+                       train_set: pd.DataFrame, validation_set: pd.DataFrame, target_variable: str,
+                       covariates: list) -> float:
     """
     Compute the Bayesian model with the hyperparamters delivered by Optuna.
     Args:
@@ -646,10 +780,10 @@ def compute_stan_model(trial: optuna.Trial, stan_model: pystan.StanModel, data_g
         data_generation_specification:
         trial:
         stan_model:
-        model_hyperparameters_setting:
+        model_hyperparameter_settings:
         sampling_parameters:
         train_set:
-        validation_month: Single value of validation month
+        validation_set: validation set for the current validation month with covariates and target variable
 
     Returns:
 
@@ -657,17 +791,22 @@ def compute_stan_model(trial: optuna.Trial, stan_model: pystan.StanModel, data_g
     stan_data = {}
     # Get the target data and derive the needed stats such as length of the data
     dataY = train_set[target_variable].values
-    dataY_eval = validation_month[target_variable].values
-    stan_data["Y"] = dataY
-    stan_data["Y_eval"] = dataY_eval
+    dataY_eval = validation_set[target_variable].values
+    stan_data["Y"] = dataY.astype(int)
+    stan_data["Y_eval"] = dataY_eval.astype(int)
     stan_data["no_data"] = len(dataY)
     stan_data["no_data_eval"] = len(dataY_eval)
     # Get the static parameters of the configuration dictionary and add them to the stan_data dictionary
-    stan_data["spline_degree"] = data_generation_specification['spline_degree']
+    for key, value in data_generation_specification.items():
+        if key == "random_walk_order":
+            for key2, value2 in value.items():
+                stan_data[key2] = value2
+        else:
+            stan_data[key] = value
 
     # Get the dynamic parameters of the configuration dictionary, initialize them as hyperparameters and add them to
     # the stan_data dictionary
-    for key, value in model_hyperparameters_setting.items():
+    for key, value in model_hyperparameter_settings.items():
         if key == "no_interior_knots":
             for key2, value2 in value.items():
                 param_type = value2['type']
@@ -686,12 +825,14 @@ def compute_stan_model(trial: optuna.Trial, stan_model: pystan.StanModel, data_g
             elif param_type == 'float':
                 stan_data[key] = trial.suggest_float(key, param_range[0], param_range[1])
 
+    # FixMe: We attempt to use covariate data at the time of the evaluation month which is not available in the true
+    #  future
     # Specify covariate data passed to stan model and parameters subject to other hyperparameters
     covariate_iterator = 1
     for covariate in covariates:
         stan_data[f"covariate_data_X{covariate_iterator}"] = train_set[covariate].values
-        stan_data[f"covariate_data_X{covariate_iterator}_eval"] = validation_month[covariate].values
-        stan_data[f"num_basis_X{covariate_iterator}"] = (
+        stan_data[f"covariate_data_X{covariate_iterator}_eval"] = validation_set[covariate].values
+        stan_data[f"no_basis_X{covariate_iterator}"] = (
                 stan_data[f"no_interior_knots_X{covariate_iterator}"] + stan_data["spline_degree"])
         covariate_iterator += 1
 
@@ -709,8 +850,26 @@ def compute_stan_model(trial: optuna.Trial, stan_model: pystan.StanModel, data_g
     return crps_average_eval
 
 
+# ToDo: Create features for this dynamic covariate
+def get_covarariates_for_forecast_horizon(covariates_dict: dict, forecast_horizon: int) -> list:
+    """
+    Get the covariates corresponding to the specified forecast horizon.
+    Args:
+        data_generation_specification: dictionary containing the data generation specification
+        forecast_horizon: forecast horizon in months
+
+    Returns: covariates (list): list of covariates for model corresponding to the specified forecast horizon
+
+    """
+    general_covariates = covariates_dict['general_covariates']
+    horizon_specific_covariates = covariates_dict['horizon_specific_covariates'][f'forecast_horizon_{forecast_horizon}']
+    covariates = general_covariates + horizon_specific_covariates
+
+    return covariates
+
+
 def compute_baseline_model(trial, training_data: pd.DataFrame, validation_month: int,
-                           model_hyperparameters_setting: dict, forecast_horizon: int, target_variable: str,
+                           model_hyperparameter_settings: dict, forecast_horizon: int, target_variable: str,
                            is_baseline_model=True) -> float:
     """
     Compute the baseline model for the specified configuration.
@@ -720,7 +879,7 @@ def compute_baseline_model(trial, training_data: pd.DataFrame, validation_month:
         trial:
         forecast_horizon:
         training_data: DataFrame containing the training data for the cross-validation process
-        model_hyperparameters_setting: dictionary with hyperparameter settings for baseline model
+        model_hyperparameter_settings: dictionary with hyperparameter settings for baseline model
         validation_month: month_id of validation month
 
     Returns:
@@ -728,17 +887,18 @@ def compute_baseline_model(trial, training_data: pd.DataFrame, validation_month:
     """
     # Get the hyperparameters of the configuration dictionary
     rolling_window_length = trial.suggest_int('rolling_window_length',
-                                              model_hyperparameters_setting['rolling_window_length']['range'][0],
-                                              model_hyperparameters_setting['rolling_window_length']['range'][1])
+                                              model_hyperparameter_settings['rolling_window_length']['range'][0],
+                                              model_hyperparameter_settings['rolling_window_length']['range'][1])
     n_quantiles = trial.suggest_int('n_quantiles',
-                                    model_hyperparameters_setting['quantiles']['n_quantiles']['range'][0],
-                                    model_hyperparameters_setting['quantiles']['n_quantiles']['range'][1])
+                                    model_hyperparameter_settings['quantiles']['n_quantiles']['range'][0],
+                                    model_hyperparameter_settings['quantiles']['n_quantiles']['range'][1])
     quantiles = []
+    # ToDo: Adjust this iteration so the same quantile does not appear twice in the selected quantiles
     for i in range(n_quantiles):
         quantile = trial.suggest_float(f'quantile_{i + 1}',
-                                       model_hyperparameters_setting['quantiles']['quantile_value']['range'][0],
-                                       model_hyperparameters_setting['quantiles']['quantile_value']['range'][1],
-                                       step=model_hyperparameters_setting['quantiles']['quantile_value']['step'])
+                                       model_hyperparameter_settings['quantiles']['quantile_value']['range'][0],
+                                       model_hyperparameter_settings['quantiles']['quantile_value']['range'][1],
+                                       step=model_hyperparameter_settings['quantiles']['quantile_value']['step'])
         quantiles.append(quantile)
     # Sort the quantiles to ensure they are in ascending order
     quantiles = sorted(quantiles)
@@ -859,7 +1019,7 @@ def compute_stan_model_actual(actuals: pd.DataFrame, training_data: pd.DataFrame
             stan_data[f"covariate_data_X{covariate_iterator}"] = train_set[covariate].values
             # ToDo: ! Here we run into the expected data definition problem !
             stan_data[f"covariate_data_X{covariate_iterator}_eval"] = validation_month[covariate].values
-            stan_data[f"num_basis_X{covariate_iterator}"] = (
+            stan_data[f"no_basis_X{covariate_iterator}"] = (
                     stan_data[f"no_interior_knots_X{covariate_iterator}"] + stan_data["spline_degree"])
             covariate_iterator += 1
         dataY = train_set[target_variable].values
@@ -937,7 +1097,8 @@ def prepare_actual_run_bayes(actuals: pd.DataFrame, training_data: pd.DataFrame,
 
 
 def compute_baseline_model_actual(actuals: pd.DataFrame, training_data: pd.DataFrame,
-                                  best_runs_cross_validation: pd.DataFrame, model_name: str) -> (float, float, pd.DataFrame):
+                                  best_runs_cross_validation: pd.DataFrame, model_name: str) -> (
+        float, float, pd.DataFrame):
     """
     Runs the baseline model for the best configurations of the cross-validation process on the actuals data for each
     forecast horizon of a country.
@@ -958,9 +1119,13 @@ def compute_baseline_model_actual(actuals: pd.DataFrame, training_data: pd.DataF
     """
 
     actuals_run_specification = prepare_actual_run_baseline(actuals, best_runs_cross_validation)
+    # Determine last month of training data (same for every validation month)
+    last_training_month = (
+            actuals_run_specification['month_id'].min() - actuals_run_specification['forecast_horizon'].min())
     # Run baseline model with the best parameter settings for each forecast horizon
     for index, row in actuals_run_specification.iterrows():
-        # Note: we don't need tp access the forecast horizon explicitly as it is given by the validation month implicitly
+        # Note: we don't need tp access the forecast horizon explicitly as it is given by the validation month
+        #       implicitly
         run_id = row['run_id']
         val_month = row['month_id']
         actual_value = row['ged_sb']
@@ -968,22 +1133,19 @@ def compute_baseline_model_actual(actuals: pd.DataFrame, training_data: pd.DataF
         # Construct the file path the parameter settings are stored in
         # ToDo: Check that baseline projects are stored under 2
         file_path = f"mlruns/2/{run_id}/artifacts/{model_name}_model_specification.json"
-        # Get the hyperparameters_setting from the model_parameters dictionary
-        model_hyperparameters_setting = read_test_model_parameters(file_path, is_baseline_model=True)
+        # Get the hyperparameter_settings from the model_parameters dictionary
+        model_hyperparameter_settings = read_test_model_parameters(file_path, is_baseline_model=True)
 
         # Get the length of the training window and set the training data accordingly
-        rolling_window_length = model_hyperparameters_setting['rolling_window_length']
-        # Determine last month of training data
-        last_training_month = (
-                actuals_run_specification['month_id'].min() - actuals_run_specification['forecast_horizon'].min())
+        rolling_window_length = model_hyperparameter_settings['rolling_window_length']
         # Determine train data set and return it if bayesian model
         train_set = training_data[
             training_data['month_id'].between(last_training_month - rolling_window_length, last_training_month)]
 
         # Get the quantiles to be computed as estimates
-        # Read the 'quantiles' from model_hyperparameters_setting and convert it back to a list
+        # Read the 'quantiles' from model_hyperparameter_settings and convert it back to a list
         # Default to an empty list if the key is not found
-        quantiles_json = model_hyperparameters_setting.get('quantiles', '[]')
+        quantiles_json = model_hyperparameter_settings.get('quantiles', '[]')
         quantiles = json.loads(quantiles_json)
         # Compute the baseline CRPS score for a country and validation month
         crps_score = compute_baseline_crps(train_set, actual_value, quantiles)
@@ -992,7 +1154,7 @@ def compute_baseline_model_actual(actuals: pd.DataFrame, training_data: pd.DataF
 
     # ToDO: Consider adding descriptions what the standard deviations relate to
     crps_results_country_specific = actuals_run_specification[['country_id', 'month_id', 'forecast_horizon',
-    'test_score', 'run_id']]
+                                                               'test_score', 'run_id']]
 
     return crps_results_country_specific
 
@@ -1009,6 +1171,7 @@ def prepare_actual_run_baseline(actuals: pd.DataFrame, best_runs_cross_validatio
     Returns:
 
     """
+    # ToDo: Check if we can leave out country_id
     # Sort best runs dataframe by forecast horizon and country
     best_runs_cross_validation = best_runs_cross_validation.sort_values(
         by=['forecast_horizon', 'country_id']).reset_index(
@@ -1055,8 +1218,8 @@ def read_test_model_parameters(file_path: str, is_bayesian_model: Optional[bool]
         data_generation_specification = model_parameters['data_generation_specification']
         return stan_data, sampling_parameters, data_generation_specification
     if is_baseline_model:
-        model_hyperparameters_setting = model_parameters['best_params']
-        return model_hyperparameters_setting
+        model_hyperparameter_settings = model_parameters['best_params']
+        return model_hyperparameter_settings
 
 
 def calculate_crps(idata: az.InferenceData, actuals: pd.DataFrame, posterior_predictive: str) -> (pd.DataFrame, float):
