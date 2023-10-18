@@ -6,12 +6,6 @@ import socket
 import pandas as pd
 
 
-def map_country_id_to_country_name(country_id: int, country_mapping: pd.DataFrame) -> str:
-    # Determine country_name based upon entry in country_mapping with columns 'country_id' and 'name'
-    country_name = country_mapping[country_mapping['country_id'] == country_id]['name'].values[0]
-    return country_name
-
-
 def generate_datetime_list(start_year: int, start_month: int, end_year: int, end_month: int) -> list:
     """
     Generates a list of datetime objects ranging from the specified starting year and month to the specified ending year and month.

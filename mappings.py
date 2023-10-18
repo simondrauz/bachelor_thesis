@@ -1,11 +1,20 @@
+from datetime import datetime
+
 import pandas as pd
-from datetime import datetime, timedelta
 
 
 def import_country_mapping():
     country_list = pd.read_csv(
         r'C:\Users\Uwe Drauz\Documents\bachelor_thesis_local\shared_competition_data\country_list\country_list.csv')
     return country_list
+
+
+def map_country_id_to_country_name(country_id: int) -> str:
+    # Import country mapping
+    country_mapping = import_country_mapping()
+    # Determine country_name based upon entry in country_mapping with columns 'country_id' and 'name'
+    country_name = country_mapping[country_mapping['country_id'] == country_id]['name'].values[0]
+    return country_name
 
 
 def map_date_to_month_id(year: int, month: int) -> int:
