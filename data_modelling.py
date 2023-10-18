@@ -1,6 +1,6 @@
 import json
 import time
-from typing import Tuple, Optional, Union, Dict, List, Any
+from typing import Tuple, Optional, Union, Dict, Any
 
 import CRPS.CRPS as pscore
 import arviz as az
@@ -9,12 +9,12 @@ import optuna
 import pandas as pd
 import pystan
 from numpy import ndarray
+from optuna.samplers import GridSampler
 from pandas import DataFrame
 
 from data_logging import (mlflow_logging_optuna_bayesian,
                           mlflow_logging_optuna_baseline, ml_flow_logging_actual_baseline)
 from help_functions import seconds_to_format
-from mappings import map_month_id_to_datetime
 
 
 class HyperparameterTuning:
@@ -75,7 +75,14 @@ class HyperparameterTuning:
         return crps_score  # Optuna will try to minimize this value
 
     def run_optimization(self, n_trials: int = 100):
-        study = optuna.create_study()
+        # Define the parameter grid
+        param_grid = {
+            'rolling_window_length': list(range(1, 37))  # 1 to 36 inclusive
+        }
+
+        # Create the study with GridSampler
+        study = optuna.create_study(sampler=GridSampler(param_grid))
+        # study = optuna.create_study()
         study.optimize(self.objective, n_trials=n_trials)
         return study, study.best_params, study.best_value
 
@@ -280,15 +287,24 @@ def run_model(evaluation_year: int, model_name: str, actuals: pd.DataFrame, trai
         test_results_all_countries = pd.DataFrame(
             columns=['country_id', 'month_id', 'forecast_horizon', 'test_score', 'run_id'])
 
+        # OPTIONAL: Improve hard coded part
+        max_quantiles = 99
+        columns_contribution_results = ["month_id", "country_id", "draw"]
+
+        # Pre-allocate columns for maximum number of quantiles
+        for i in range(1, max_quantiles + 1):
+            columns_contribution_results.append(f"sample_{i}")
+
+        competition_contribution_results = pd.DataFrame(columns=columns_contribution_results)
         # Unpack the rest of model_run_config dictionary
         (model_hyperparameter_settings, data_specification, descriptive_values) = unpack_model_configuration(
             model_run_config, is_baseline_model=is_baseline_model)
 
         # ToDo: Remove
         # Filter country_ids on countries 133, 124, 220 for testing purposes
-        # country_ids = [133, 124, 220]
+        # country_ids = [246, 133, 1]
         # Take last 20 entries of list country_ids
-        # country_ids = country_ids[-2:]
+        # country_ids = country_ids[-20:]
 
         # Retrieve target variable from config
         target_variable = data_specification['target_variable']
@@ -350,6 +366,8 @@ def run_model(evaluation_year: int, model_name: str, actuals: pd.DataFrame, trai
                     months_available_for_cv_sets = (months_available_before_eval_year -
                                                     model_hyperparameter_settings["rolling_window_length"]["range"][1] -
                                                     forecast_horizon)
+                    # OPTIONAL: Modification for forecast_horizon as we do not need full years for 2021 here. we could
+                    #           one iteration to the one calculated below, if the remainder of the division is 10 or 11
                     k_fold_iterations = months_available_for_cv_sets // len(actuals_country_specific)
 
                 # OPTIONAL: Consider logging/ storing the results of the hyperparameter tuning process (baseline)
@@ -407,11 +425,13 @@ def run_model(evaluation_year: int, model_name: str, actuals: pd.DataFrame, trai
                 end_tuning_time_country = time.time() - start_tuning_time_country
 
             # Run final model on best parameter configurations obtained from cross-validation process
-            test_result_country = compute_baseline_model_actual(
+            test_result_country, competition_contribution_results_country_specific = compute_baseline_model_actual(
                 actuals_country_specific, training_data_country_specific, best_runs_cross_validation_country,
-                model_name)
+                model_name, country_id, columns_contribution_results=columns_contribution_results)
             # Append the results for the country to the results for all countries
             test_results_all_countries = test_results_all_countries.append(test_result_country, ignore_index=True)
+            competition_contribution_results = competition_contribution_results.append(
+                competition_contribution_results_country_specific, ignore_index=True)
             end_tuning_time_country = time.time() - start_tuning_time_country
             print(f'Finished tuning for country {country_id} and calculating on actuals in '
                   f'{seconds_to_format(end_tuning_time_country)}')
@@ -446,6 +466,9 @@ def run_model(evaluation_year: int, model_name: str, actuals: pd.DataFrame, trai
             "std_global_test_score": std_global_test_score,
             "test_results_global": test_results_global
         }
+        competition_contribution_results['month_id'] = competition_contribution_results['month_id'].astype(int)
+        competition_contribution_results['country_id'] = competition_contribution_results['country_id'].astype(int)
+        competition_contribution_results['draw'] = competition_contribution_results['draw'].astype(int)
         run_time_one_evaluation_year = time.time() - start_time
         ml_flow_logging_actual_baseline(model_name=model_name,
                                         evaluation_year=evaluation_year,
@@ -453,9 +476,10 @@ def run_model(evaluation_year: int, model_name: str, actuals: pd.DataFrame, trai
                                         validation_approach=validation_approach,
                                         test_results_global_dict=test_results_global_dict,
                                         test_results_all_countries=test_results_all_countries,
+                                        competition_contribution_results=competition_contribution_results,
                                         run_time=run_time_one_evaluation_year)
         # ToDo: Partly redundant return
-        return test_results_global_dict, test_results_global, test_results_all_countries
+        return test_results_global_dict, test_results_global, test_results_all_countries, competition_contribution_results
 
 
 def calculate_min_max_forecast_horizon(actuals: pd.DataFrame, cross_validation_settings: dict) -> Tuple[int, int]:
@@ -602,7 +626,7 @@ def run_hyperparameter_tuning(trial, actuals: pd.DataFrame, training_data: pd.Da
     # Iterate over the number of folds
     for k in range(1, k_fold_iterations + 1):
         # Retrieve the validation set for the current fold
-        validation_set_months = get_validation_months_for_fold(actuals, training_data, k, forecast_horizon,
+        validation_set_months = get_validation_months_for_fold(actuals, training_data, k, k_fold_iterations, forecast_horizon,
                                                                validate_on_horizon, validate_on_horizon_and_month,
                                                                is_baseline_model=is_baseline_model,
                                                                is_bayesian_model=is_bayesian_model)
@@ -648,7 +672,7 @@ def run_hyperparameter_tuning(trial, actuals: pd.DataFrame, training_data: pd.Da
                 # Train model on training set and cross-validate on validation month using the specified model
                 # Note: as for the baseline the length of the train set is a hyperparameter itself, it its specified
                 #       within the compute_baseline_model function
-                crps_val_month = compute_baseline_model(trial, training_data, val_month, model_hyperparameter_settings,
+                crps_val_month, _ = compute_baseline_model(trial, training_data, val_month, model_hyperparameter_settings,
                                                         forecast_horizon, target_variable)
                 # Append the CRPS score to the list
                 crps_scores_val_set.append(crps_val_month)
@@ -679,6 +703,7 @@ def get_validation_months_for_fold(actuals: pd.DataFrame, training_data: pd.Data
     Get the validation set for the specified fold.
     Note: If we validate on forecast horizon and month this function will return a single month only.
     Args:
+        K: Total intended number of folds
         forecast_horizon: forecast horizon in months
         validate_on_horizon: indicates whether the model should be cross-validated on forecast horizons only
         validate_on_horizon_and_month: indicates whether the model should be cross-validated on forecast horizons and
@@ -703,7 +728,7 @@ def get_validation_months_for_fold(actuals: pd.DataFrame, training_data: pd.Data
     # Derive validation sets from actuals data
     # First month in validation set
     first_validation_month = actuals['month_id'].min() - 12 * k
-    months_available_for_validation = training_data["month_id"].max - (first_validation_month - 1)
+    months_available_for_validation = training_data["month_id"].max() - (first_validation_month - 1)
 
     if validate_on_horizon is True:
         if months_available_for_validation < 12:
@@ -720,9 +745,6 @@ def get_validation_months_for_fold(actuals: pd.DataFrame, training_data: pd.Data
         validation_month = first_validation_month + forecast_horizon - 3
         # Check if there is a corresponding observation in training_data
         if validation_month not in training_data['month_id'].values:
-            print(f"Validation month_ {map_month_id_to_datetime(validation_month)} not in training data. For validating"
-                  f"on forecast_horizon we leave this month out of the validation set, for validating on "
-                  f"forecast_horizon + month we perform a fold of the year one ahead of the first forecast_horizon.")
             validation_month_adjusted = validation_month - 12 * K
             validation_set = training_data[training_data['month_id'] == validation_month_adjusted]
         else:
@@ -868,9 +890,10 @@ def get_covarariates_for_forecast_horizon(covariates_dict: dict, forecast_horizo
     return covariates
 
 
+# ToDo: ! Change if not fixed quantiles anymore!
 def compute_baseline_model(trial, training_data: pd.DataFrame, validation_month: int,
                            model_hyperparameter_settings: dict, forecast_horizon: int, target_variable: str,
-                           is_baseline_model=True) -> float:
+                           is_baseline_model=True, use_fixed_quantiles=True) -> float:
     """
     Compute the baseline model for the specified configuration.
     Args:
@@ -889,19 +912,23 @@ def compute_baseline_model(trial, training_data: pd.DataFrame, validation_month:
     rolling_window_length = trial.suggest_int('rolling_window_length',
                                               model_hyperparameter_settings['rolling_window_length']['range'][0],
                                               model_hyperparameter_settings['rolling_window_length']['range'][1])
-    n_quantiles = trial.suggest_int('n_quantiles',
-                                    model_hyperparameter_settings['quantiles']['n_quantiles']['range'][0],
-                                    model_hyperparameter_settings['quantiles']['n_quantiles']['range'][1])
-    quantiles = []
-    # ToDo: Adjust this iteration so the same quantile does not appear twice in the selected quantiles
-    for i in range(n_quantiles):
-        quantile = trial.suggest_float(f'quantile_{i + 1}',
-                                       model_hyperparameter_settings['quantiles']['quantile_value']['range'][0],
-                                       model_hyperparameter_settings['quantiles']['quantile_value']['range'][1],
-                                       step=model_hyperparameter_settings['quantiles']['quantile_value']['step'])
-        quantiles.append(quantile)
-    # Sort the quantiles to ensure they are in ascending order
-    quantiles = sorted(quantiles)
+    if not use_fixed_quantiles:
+        n_quantiles = trial.suggest_int('n_quantiles',
+                                        model_hyperparameter_settings['quantiles']['n_quantiles']['range'][0],
+                                        model_hyperparameter_settings['quantiles']['n_quantiles']['range'][1])
+        quantiles = []
+        # ToDo: Adjust this iteration so the same quantile does not appear twice in the selected quantiles
+        for i in range(n_quantiles):
+            quantile = trial.suggest_float(f'quantile_{i + 1}',
+                                           model_hyperparameter_settings['quantiles']['quantile_value']['range'][0],
+                                           model_hyperparameter_settings['quantiles']['quantile_value']['range'][1],
+                                           step=model_hyperparameter_settings['quantiles']['quantile_value']['step'])
+            quantiles.append(quantile)
+        # Sort the quantiles to ensure they are in ascending order
+        quantiles = sorted(quantiles)
+    else:
+        # Use fixed quantiles from 0.01 to 0.99 in 0.01 steps
+        quantiles = [i / 100 for i in range(1, 100)]
     # Compute the training set for the current validation month
     train_set = get_train_set_for_fold(training_data=training_data,
                                        validation_month=validation_month,
@@ -910,12 +937,12 @@ def compute_baseline_model(trial, training_data: pd.DataFrame, validation_month:
                                        target_variable=target_variable,
                                        is_baseline_model=is_baseline_model)
     observation = training_data[training_data['month_id'] == validation_month][target_variable].values[0]
-    crps = compute_baseline_crps(train_set, observation, quantiles)
+    crps, quantiles_calculated = compute_baseline_crps(train_set, observation, quantiles)
 
-    return crps
+    return crps, quantiles_calculated
 
 
-def compute_baseline_crps(train_set: pd.DataFrame, observation: float, quantiles: list) -> float:
+def compute_baseline_crps(train_set: pd.DataFrame, observation: float, quantiles: list) -> Tuple[float, DataFrame]:
     """
     Performs forecast for the specific model settings and returns the CRPS value of the prediction for forecast_month
 
@@ -931,7 +958,7 @@ def compute_baseline_crps(train_set: pd.DataFrame, observation: float, quantiles
     # Compute forecast samples based on quantiles computed from training data
     crps = compute_crps_baseline(observation=observation, quantiles=quantiles)
 
-    return crps
+    return crps, quantiles
 
 
 def compute_quantiles(train_data: pd.DataFrame, quantiles: list) -> pd.DataFrame:
@@ -1097,7 +1124,8 @@ def prepare_actual_run_bayes(actuals: pd.DataFrame, training_data: pd.DataFrame,
 
 
 def compute_baseline_model_actual(actuals: pd.DataFrame, training_data: pd.DataFrame,
-                                  best_runs_cross_validation: pd.DataFrame, model_name: str) -> (
+                                  best_runs_cross_validation: pd.DataFrame, model_name: str, country_id: int, columns_contribution_results: list,
+                                  use_fixed_quantiles = True) -> (
         float, float, pd.DataFrame):
     """
     Runs the baseline model for the best configurations of the cross-validation process on the actuals data for each
@@ -1117,7 +1145,7 @@ def compute_baseline_model_actual(actuals: pd.DataFrame, training_data: pd.DataF
                                                       validation month
 
     """
-
+    competition_contribution_results_country_specific = pd.DataFrame(columns=columns_contribution_results)
     actuals_run_specification = prepare_actual_run_baseline(actuals, best_runs_cross_validation)
     # Determine last month of training data (same for every validation month)
     last_training_month = (
@@ -1142,21 +1170,41 @@ def compute_baseline_model_actual(actuals: pd.DataFrame, training_data: pd.DataF
         train_set = training_data[
             training_data['month_id'].between(last_training_month - rolling_window_length, last_training_month)]
 
-        # Get the quantiles to be computed as estimates
-        # Read the 'quantiles' from model_hyperparameter_settings and convert it back to a list
-        # Default to an empty list if the key is not found
-        quantiles_json = model_hyperparameter_settings.get('quantiles', '[]')
-        quantiles = json.loads(quantiles_json)
-        # Compute the baseline CRPS score for a country and validation month
-        crps_score = compute_baseline_crps(train_set, actual_value, quantiles)
+        if not use_fixed_quantiles:
+            # Get the quantiles to be computed as estimates
+            # Read the 'quantiles' from model_hyperparameter_settings and convert it back to a list
+            # Default to an empty list if the key is not found
+            quantiles_json = model_hyperparameter_settings.get('quantiles', '[]')
+            quantiles = json.loads(quantiles_json)
+            # Compute the baseline CRPS score for a country and validation month
+        else:
+            # Use fixed quantiles from 0.01 to 0.99 in 0.01 steps
+            quantiles = [i / 100 for i in range(1, 100)]
+        crps_score, quantiles_calculated = compute_baseline_crps(train_set, actual_value, quantiles)
         # Append the CRPS score to the column 'crps_score' in actuals_run_specification
         actuals_run_specification.loc[actuals_run_specification['month_id'] == val_month, 'test_score'] = crps_score
+        # Append for one row in competition_contribution_results_country_specific the country_id for column country_id
+        # and the val_month for column month_id
+        # Addtionally count the no of quantiles and add this value in the column draws and the corresponding quantiles
+        # with a own column for each quantile as sample 1, 2, ..., no. draws
+        row_temp = {
+            "month_id": val_month,
+            "country_id": country_id,
+            "draw": len(quantiles)
+        }
 
+        # Add quantile values as separate columns
+        for i, q_value in enumerate(quantiles_calculated['quantile_values']):
+            col_name = f"sample_{i + 1}"
+            row_temp[col_name] = q_value
+
+        competition_contribution_results_country_specific = competition_contribution_results_country_specific.append(
+            row_temp, ignore_index=True)
     # ToDO: Consider adding descriptions what the standard deviations relate to
     crps_results_country_specific = actuals_run_specification[['country_id', 'month_id', 'forecast_horizon',
                                                                'test_score', 'run_id']]
 
-    return crps_results_country_specific
+    return crps_results_country_specific, competition_contribution_results_country_specific
 
 
 def prepare_actual_run_baseline(actuals: pd.DataFrame, best_runs_cross_validation: pd.DataFrame):
