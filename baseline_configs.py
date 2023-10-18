@@ -18,13 +18,13 @@ def fetch_baseline_model_run_config(data_specification: dict) -> dict:
         "model_hyperparameter_settings": {
             "rolling_window_length": {
                 "type": "int",
-                "range": [6, 36],
+                "range": [1, 36],
                 # Discrete values alternativly: [6, 9, 12, 15, 18, 24, 30, 36]
             },
             "quantiles": {
                 "n_quantiles": {
                     "type": "int",
-                    "range": [2, 9]
+                    "range": [2, 8]
                 },
                 "quantile_value": {
                     "type": "float",
