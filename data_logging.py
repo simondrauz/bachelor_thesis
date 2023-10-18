@@ -9,9 +9,9 @@ import arviz as az
 import mlflow
 import optuna
 import pandas as pd
-from help_functions import map_country_id_to_country_name
 
 from help_functions import seconds_to_format
+from mappings import map_country_id_to_country_name
 
 
 def count_divergences(idata: az.InferenceData) -> int:
@@ -560,6 +560,7 @@ def ml_flow_logging_actual_baseline(model_name: str,
                                     validation_approach: str,
                                     test_results_global_dict: dict,
                                     test_results_all_countries: pd.DataFrame,
+                                    competition_contribution_results: pd.DataFrame,
                                     run_time: float):
     # Check that process is either 'cross-validation' or 'model-testing'
     assert process in ['cross-validation', 'model-testing'], \
@@ -600,3 +601,13 @@ def ml_flow_logging_actual_baseline(model_name: str,
                 mlflow.log_artifact(test_results_all_countries_path)
             except Exception as e:
                 print("An error occurred while logging the actuals results as an artifact: ", e)
+
+            try:
+                # Save the DataFrame to a Parquet file
+                competition_contribution_results_path = os.path.join(tmpdir, f"contribution_becker_drauz_{model_name}_test_window_{evaluation_year}.parquet")
+                competition_contribution_results.to_parquet(competition_contribution_results_path)
+
+                # Log the Parquet file as an artifact
+                mlflow.log_artifact(competition_contribution_results_path)
+            except Exception as e:
+                print("An error occurred while logging the competition contribution results as an artifact: ", e)
