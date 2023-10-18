@@ -1,12 +1,13 @@
-from data_gathering import gather_data_actuals, gather_data_features
-from data_preparation import select_data, prepare_data, get_training_data, generate_data_dict_pre_modelling
-from data_visualization import basic_line_plot, import_country_mapping
-from bayesian_models_configs import fetch_model_run_config
-from baseline_configs import fetch_baseline_model_run_config
-from data_modelling import run_model
-from help_functions import MLFlowServer, seconds_to_format
-from data_preparation import temporary_feature_selection, temporary_standardization
 import time
+
+from baseline_configs import fetch_baseline_model_run_config
+from bayesian_models_configs import fetch_model_run_config
+from data_gathering import gather_data_actuals, gather_data_features
+from data_modelling import run_model
+from data_preparation import preprocess_data
+from data_preparation import select_data, prepare_data, generate_data_dict_pre_modelling
+from data_visualization import basic_line_plot, import_country_mapping
+from help_functions import MLFlowServer, seconds_to_format
 
 if __name__ == '__main__':
     # STEP: DEFINE BOOLEAN BEFORE EXECUTION
@@ -72,30 +73,36 @@ if __name__ == '__main__':
         "2021": data_cm_actual_2021
         }
 
+    # Determine all countries
+    actual_countries = data_cm_actual_allyears['country_id'].unique()
+    # Determine countries with at least one conflict fatality
+    feature_countries_non_zero = data_cm_features_allyears[data_cm_features_allyears['ged_sb'] > 0][
+        'country_id'].unique()
     if run_bayesian_model_bool is True:
-        # STEP: FEATURE SELECTION until put into proper function
-        data_cm_features_allyears = temporary_feature_selection(data_cm_features_allyears)
-        # STEP: STANDARDIZATION until put into proper function
-        data_cm_features_allyears = temporary_standardization(data_cm_features_allyears)
-
+        # ToDo: Decide on which countries the bayesian model should be trained
+        # STEP: FEATURE SELECTION AND STANDARDIZATION
+        covariates = []
+        lagged_covariates = ['ged_sb', 'ged_sb_tsum_24', 'decay_ged_sb_5', 'decay_ged_sb_100', 'decay_ged_sb_500', 'wdi_sp_pop_totl']
+        # Select countries which have at least one conflict fatality
+        data_cm_features_allyears = data_cm_features_allyears[data_cm_features_allyears['country_id'].isin(feature_countries_non_zero)]
+        data_cm_features_allyears = preprocess_data(data_cm_features_allyears, covariates, lagged_covariates, standardize=True)
     if run_baseline_model_bool is True:
         # STEP: Experimental filtering on countries with conflict fatalities
-        # Determine all countries
-        countries_ids_all_actuals = data_cm_actual_allyears['country_id'].unique()
-        # Determine countries with at least one conflict fatality
-        countries_ids_no_zero = data_cm_features_allyears[data_cm_features_allyears['ged_sb'] > 0][
-            'country_id'].unique()
+        feature_and_actuals_countries_non_zero = list(set(feature_countries_non_zero) & set(actual_countries))
         # Filter feature data to only include countries with at least one conflict fatality and also in the actuals data
-        data_cm_features_allyears = data_cm_features_allyears[(data_cm_features_allyears['country_id'].isin(
-            countries_ids_no_zero) & data_cm_features_allyears['country_id'].isin(countries_ids_all_actuals))]
+        data_cm_features_allyears = data_cm_features_allyears[
+            data_cm_features_allyears['country_id'].isin(feature_and_actuals_countries_non_zero)]
+
+        # data_cm_features_allyears = data_cm_features_allyears[(data_cm_features_allyears['country_id'].isin(
+        #     countries_ids_no_zero) & data_cm_features_allyears['country_id'].isin(countries_ids_all_actuals))]
         # filter actuals data to only include countries with at least one conflict fatality
         for evaluation_year in evaluation_years:
             dict_actuals[str(evaluation_year)] = dict_actuals[str(evaluation_year)][
-                dict_actuals[str(evaluation_year)]['country_id'].isin(countries_ids_no_zero)]
+                dict_actuals[str(evaluation_year)]['country_id'].isin(feature_countries_non_zero)]
 
         print("Running baseline model on countries with at least one conflict fatality")
-        print(f"Number of countries with at least one conflict fatality: {len(countries_ids_no_zero)} of "
-              f"{len(countries_ids_all_actuals)} countries in actuals data")
+        print(f"Number of countries with at least one conflict fatality: {len(feature_and_actuals_countries_non_zero)} of "
+              f"{len(actual_countries)} countries in actuals data")
 
 
     # STEP: Generate data specification
@@ -115,14 +122,14 @@ if __name__ == '__main__':
         actuals = dict_actuals[str(evaluation_year)]
         start_time = time.time()
         if run_baseline_model_bool:
-            actual_test_results_global, test_results_global, test_results_all_countries = (
+            actual_test_results_global, test_results_global, test_results_all_countries, competition_contribution_results = (
                 run_model(evaluation_year, model_name, actuals=actuals, training_data=data_cm_features_allyears,
-                          model_run_config=model_run_config, optuna_trials=50, validate_on_horizon=True, validate_on_horizon_and_month=False,
+                          model_run_config=model_run_config, optuna_trials=36, validate_on_horizon=True, validate_on_horizon_and_month=False,
                           is_bayesian_model=run_bayesian_model_bool, is_baseline_model=run_baseline_model_bool,
                           country_mapping=country_mapping))
         elif run_bayesian_model_bool:
             actuals_results, hyperparameter_tuning_results = (run_model(evaluation_year, model_name, actuals=actuals, training_data=data_cm_features_allyears,
-                          model_run_config=model_run_config, optuna_trials=50, validate_on_horizon=True, validate_on_horizon_and_month=False,
+                          model_run_config=model_run_config, optuna_trials=36, validate_on_horizon=True, validate_on_horizon_and_month=False,
                           is_bayesian_model=run_bayesian_model_bool, is_baseline_model=run_baseline_model_bool,
                           country_mapping=country_mapping))
         end_time = time.time() - start_time
@@ -131,16 +138,16 @@ if __name__ == '__main__':
 
         start_time = time.time()
         if run_baseline_model_bool:
-            actual_test_results_global, test_results_global, test_results_all_countries = (
+            actual_test_results_global, test_results_global, test_results_all_countries, competition_contribution_results = (
                 run_model(evaluation_year, model_name, actuals=actuals, training_data=data_cm_features_allyears,
-                          model_run_config=model_run_config, optuna_trials=50, validate_on_horizon=False,
+                          model_run_config=model_run_config, optuna_trials=36, validate_on_horizon=False,
                           validate_on_horizon_and_month=True,
                           is_bayesian_model=run_bayesian_model_bool, is_baseline_model=run_baseline_model_bool,
                           country_mapping=country_mapping))
         elif run_bayesian_model_bool:
             actuals_results, hyperparameter_tuning_results = (
                 run_model(evaluation_year, model_name, actuals=actuals, training_data=data_cm_features_allyears,
-                          model_run_config=model_run_config, optuna_trials=50, validate_on_horizon=False,
+                          model_run_config=model_run_config, optuna_trials=36, validate_on_horizon=False,
                           validate_on_horizon_and_month=True,
                           is_bayesian_model=run_bayesian_model_bool, is_baseline_model=run_baseline_model_bool,
                           country_mapping=country_mapping))
