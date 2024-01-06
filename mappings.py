@@ -17,6 +17,14 @@ def map_country_id_to_country_name(country_id: int) -> str:
     return country_name
 
 
+def map_country_name_to_country_id(country_name: str) -> int:
+    # Import country mapping
+    country_mapping = import_country_mapping()
+    # Determine country_name based upon entry in country_mapping with columns 'country_id' and 'name'
+    country_id = country_mapping[country_mapping['name'] == country_name]['country_id'].values[0]
+    return country_id
+
+
 def map_date_to_month_id(year: int, month: int) -> int:
     """
     Maps a datetime object to the corresponding month_id number.
