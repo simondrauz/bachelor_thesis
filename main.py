@@ -78,17 +78,19 @@ if __name__ == '__main__':
     # Determine countries with at least one conflict fatality
     feature_countries_non_zero = data_cm_features_allyears[data_cm_features_allyears['ged_sb'] > 0][
         'country_id'].unique()
+    # Determine countries with at least one conflict fatality and in actuals data
+    feature_and_actuals_countries_non_zero = list(set(feature_countries_non_zero) & set(actual_countries))
     if run_bayesian_model_bool is True:
         # ToDo: Decide on which countries the bayesian model should be trained
         # STEP: FEATURE SELECTION AND STANDARDIZATION
         covariates = []
         lagged_covariates = ['ged_sb', 'ged_sb_tsum_24', 'decay_ged_sb_5', 'decay_ged_sb_100', 'decay_ged_sb_500', 'wdi_sp_pop_totl']
         # Select countries which have at least one conflict fatality
-        data_cm_features_allyears = data_cm_features_allyears[data_cm_features_allyears['country_id'].isin(feature_countries_non_zero)]
-        data_cm_features_allyears = preprocess_data(data_cm_features_allyears, covariates, lagged_covariates, standardize=True)
+        data_cm_features_allyears = data_cm_features_allyears[data_cm_features_allyears['country_id'].isin(feature_and_actuals_countries_non_zero)]
+        data_cm_features_allyears = preprocess_data(data_cm_features_allyears, covariates, lagged_covariates,
+                                                    standardize=True, lags_needed=int, drop_na=True)
     if run_baseline_model_bool is True:
         # STEP: Experimental filtering on countries with conflict fatalities
-        feature_and_actuals_countries_non_zero = list(set(feature_countries_non_zero) & set(actual_countries))
         # Filter feature data to only include countries with at least one conflict fatality and also in the actuals data
         data_cm_features_allyears = data_cm_features_allyears[
             data_cm_features_allyears['country_id'].isin(feature_and_actuals_countries_non_zero)]
